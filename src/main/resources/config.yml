@@ -1,0 +1,111 @@
+# Configuration SHVoidItems
+
+menu:
+  title: "&8Marchand des abîmes &7(%page%/%max%)"
+  items-per-page: 45
+  items:
+    prev-page:
+      material: "ARROW"
+      display-name: "&a← Page précédente"
+      slot: 45
+    next-page:
+      material: "ARROW"
+      display-name: "&aPage suivante →"
+      slot: 53
+    close:
+      material: "PAPER"
+      display-name: "&C⤾ Retour &7(Clic)"
+      slot: 49
+      command: "dm open island_more"
+
+currency:
+  type: "item"
+  item: "ECHO_SHARD"
+
+defaults:
+  expire-seconds: 86400
+  price: 1
+
+custom:
+  SPAWNER:
+    price: 5
+  RESPAWN_ANCHOR:
+    price: 10
+  DRAGON_EGG:
+    price: 10
+  REINFORCED_DEEPSLATE:
+    price: 5
+  BARREL:
+    price: 5
+  CHEST:
+    price: 4
+
+
+  DIAMOND_SWORD:
+    price: 4
+  DIAMOND_HELMET:
+    price: 4
+  DIAMOND_CHESTPLATE:
+    price: 4
+  DIAMOND_LEGGINGS:
+    price: 4
+  DIAMOND_BOOTS:
+    price: 4
+  DIAMOND_PICKAXE:
+    price: 4
+  DIAMOND_SHOVEL:
+    price: 4
+  DIAMOND_AXE:
+    price: 4
+  DIAMOND_HOE:
+    price: 4
+
+  NETHERITE_SWORD:
+    price: 10
+  NETHERITE_HELMET:
+    price: 10
+  NETHERITE_CHESTPLATE:
+    price: 10
+  NETHERITE_LEGGINGS:
+    price: 10
+  NETHERITE_BOOTS:
+    price: 10
+  NETHERITE_PICKAXE:
+    price: 10
+  NETHERITE_SHOVEL:
+    price: 10
+  NETHERITE_AXE:
+    price: 10
+  NETHERITE_HOE:
+    price: 10
+
+blacklist:
+  - STONE
+  - DIRT
+
+countdown-format: "&e%h%h %m%m %s%s"
+
+lore:
+  - "%lore%"
+  - ""
+  - "&7Quantité : &e%quantity%"
+  - "&7Disparait dans : &e%countdown%"
+  - "&7Récupérer pour : &5%price% éclat d'echo"
+  - ""
+  - "&7&o(( &5&oCliquez pour récupérer &7&o))"
+
+options:
+  buy-sound: "AMBIENT_BASALT_DELTAS_MOOD"
+
+messages:
+  no-island: "&7[NPC] &8Marchand des Abîmes &8&l» &fVous n'avez pas encore d'île..."
+  purchase-no-funds: "&7[NPC] &8Marchand des Abîmes &8&l» &fVous n'avez pas assez d'éclats d'echo."
+  purchase-no-space: "&7[NPC] &8Marchand des Abîmes &8&l» &fVotre inventaire est plein."
+  purchase-success: "&7[NPC] &8Marchand des Abîmes &8&l» &fL'abîme veut bien te rendre ton item, cette fois ci... &7(&aAchat réussi !&7)"
+
+  no-permission: "&8&l« &f&lSH &8&l» &fCommande inconnuen, essayer autre chose."
+  player-not-found: "&cJoueur non trouvé."
+  target-no-island: "&cCe joueur n'a pas d'île."
+
+
+void-margin: 3.0
