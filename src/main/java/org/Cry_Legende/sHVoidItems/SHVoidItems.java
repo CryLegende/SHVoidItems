@@ -17,19 +17,24 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -41,11 +46,13 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
     private File dataFile;
     private org.bukkit.configuration.file.YamlConfiguration dataConfig;
     private String menuTitleTemplate;
+    private String menuTitlePrefix;
     private int itemsPerPage;
     private String currencyType;
     private Material currencyItem;
     private long defaultExpireSeconds;
     private double defaultPrice;
+    private Map<String, Double> customPrices = new HashMap<>();
     private Sound buySound;
     private Set<Material> blacklist;
     private Map<String, String> messages;
@@ -59,18 +66,22 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
     // Île affichée dans le menu de chaque viewer (la sienne, ou celle d'un joueur pour /shvoid <joueur>)
     private final Map<UUID, Island> viewedIslands = new HashMap<>();
     private NamespacedKey itemIdKey;
+    // data.yml n'est réécrit que si quelque chose a changé, et jamais avant d'avoir été relu
+    private final AtomicBoolean dirty = new AtomicBoolean();
+    private volatile boolean dataLoaded;
 
     @Override
     public void onEnable() {
         itemIdKey = new NamespacedKey(this, "void_item_id");
         saveDefaultConfig();
         loadConfigValues();
-        setupEconomy();
+        if (!setupEconomy()) return;
         getServer().getPluginManager().registerEvents(this, this);
         getCommand("shvoid").setExecutor(this);
         dataFile = new File(getDataFolder(), "data.yml");
         if (!dataFile.exists()) saveResource("data.yml", false);
         reloadData();
+        dataLoaded = true;
         new BukkitRunnable() {
             public void run() {
                 saveData();
@@ -126,17 +137,21 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         refreshTasks.values().forEach(BukkitTask::cancel);
     }
 
-    private void setupEconomy() {
-        if (getServer().getPluginManager().getPlugin("Vault") == null ||
-            (economy = getServer().getServicesManager().getRegistration(Economy.class).getProvider()) == null) {
+    private boolean setupEconomy() {
+        RegisteredServiceProvider<Economy> rsp = getServer().getPluginManager().getPlugin("Vault") == null
+            ? null : getServer().getServicesManager().getRegistration(Economy.class);
+        if (rsp == null || (economy = rsp.getProvider()) == null) {
             getLogger().severe("Vault ou provider introuvable !");
             getServer().getPluginManager().disablePlugin(this);
+            return false;
         }
+        return true;
     }
 
     private void loadConfigValues() {
         FileConfiguration cfg = getConfig();
         menuTitleTemplate = cfg.getString("menu.title");
+        menuTitlePrefix = colorize(menuTitleTemplate.split("%")[0]);
         itemsPerPage = cfg.getInt("menu.items-per-page");
         menuItems = cfg.getConfigurationSection("menu.items").getKeys(false).stream()
             .collect(Collectors.toMap(k -> k, k -> {
@@ -148,7 +163,15 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         currencyItem = Material.matchMaterial(cfg.getString("currency.item"));
         defaultExpireSeconds = cfg.getLong("defaults.expire-seconds");
         defaultPrice = cfg.getDouble("defaults.price");
-        buySound = Sound.valueOf(cfg.getString("options.buy-sound"));
+        customPrices = new HashMap<>();
+        ConfigurationSection custom = cfg.getConfigurationSection("custom");
+        if (custom != null) {
+            for (String k : custom.getKeys(false)) {
+                if (custom.contains(k + ".price")) customPrices.put(k, custom.getDouble(k + ".price"));
+            }
+        }
+        buySound = sound(cfg.getString("options.buy-sound"));
+        if (buySound == null) getLogger().warning("options.buy-sound invalide : aucun son ne sera joué à l'achat.");
         blacklist = cfg.getStringList("blacklist").stream().map(Material::matchMaterial).filter(Objects::nonNull).collect(Collectors.toSet());
         messages = cfg.getConfigurationSection("messages").getKeys(false).stream()
             .collect(Collectors.toMap(k -> k, k -> cfg.getString("messages." + k)));
@@ -174,7 +197,10 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         });
     }
 
-    private void saveData() {
+    private synchronized void saveData() {
+        // Rien n'a changé depuis la dernière écriture, ou data.yml n'a pas encore été relu : on n'y touche pas
+        if (!dataLoaded || !dirty.getAndSet(false)) return;
+        File tmp = new File(dataFile.getParentFile(), dataFile.getName() + ".tmp");
         try {
             org.bukkit.configuration.file.YamlConfiguration yaml = new org.bukkit.configuration.file.YamlConfiguration();
             islandsItems.forEach((id, map) -> map.forEach((k, ti) -> {
@@ -183,10 +209,12 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
                 yaml.set(base + ".amount", ti.amount);
                 yaml.set(base + ".expireAt", ti.expireAt);
             }));
-            yaml.save(dataFile);
+            // Écriture dans un fichier temporaire puis remplacement : un arrêt en plein milieu ne tronque pas data.yml
+            yaml.save(tmp);
+            Files.move(tmp.toPath(), dataFile.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (IOException e) {
-            getLogger().severe("Erreur sauvegarde data.yml");
-            e.printStackTrace();
+            dirty.set(true);
+            getLogger().log(Level.SEVERE, "Erreur sauvegarde data.yml", e);
         }
     }
 
@@ -196,6 +224,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         return SuperiorSkyblockAPI.getGrid().getIslands().stream()
             .filter(i -> {
                 Location c = i.getCenter(dimension(loc.getWorld().getEnvironment()));
+                if (c == null) return false;
                 double r = i.getIslandSize() / 2.0;
                 return loc.getX() >= c.getX() - r - margin && loc.getX() <= c.getX() + r + margin &&
                     loc.getZ() >= c.getZ() - r - margin && loc.getZ() <= c.getZ() + r + margin;
@@ -219,6 +248,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
                     String key = UUID.randomUUID().toString();
                     map.put(key, new TrackedItem(key, dropped, it.getItemStack().getAmount(), Instant.now().getEpochSecond() + defaultExpireSeconds));
                 });
+        dirty.set(true);
     }
 
     private Void openVoidMenu(Player p, int page) {
@@ -359,7 +389,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
 
     @EventHandler
     public void onInventoryClick(InventoryClickEvent e) {
-        if (!(e.getWhoClicked() instanceof Player p) || !p.getOpenInventory().getTitle().startsWith(colorize(menuTitleTemplate.split("%")[0])))
+        if (!(e.getWhoClicked() instanceof Player p) || !p.getOpenInventory().getTitle().startsWith(menuTitlePrefix))
             return;
         e.setCancelled(true);
         // Un clic dans l'inventaire du joueur ne doit rien acheter
@@ -413,6 +443,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         }
         // Retrait de la map avant de payer et de donner : un second clic ne trouve plus l'item
         if (!items.remove(itemId, ti)) return;
+        dirty.set(true);
         withdrawFunds(p, price);
         int remaining = ti.amount;
         while (remaining > 0) {
@@ -422,7 +453,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
             p.getInventory().addItem(toGive);
             remaining -= amount;
         }
-        p.playSound(p.getLocation(), buySound, 1f, 1f);
+        if (buySound != null) p.playSound(p.getLocation(), buySound, 1f, 1f);
         p.sendMessage(colorize(messages.get("purchase-success")));
         p.closeInventory();
     }
@@ -470,6 +501,14 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
     }
 
     @EventHandler
+    public void onInventoryDrag(InventoryDragEvent e) {
+        // Un item glissé dans le menu serait perdu à la fermeture
+        if (e.getWhoClicked() instanceof Player p && p.getOpenInventory().getTitle().startsWith(menuTitlePrefix)) {
+            e.setCancelled(true);
+        }
+    }
+
+    @EventHandler
     public void onInventoryClose(InventoryCloseEvent e) {
         UUID puid = e.getPlayer().getUniqueId();
         Optional.ofNullable(refreshTasks.remove(puid)).ifPresent(BukkitTask::cancel);
@@ -486,8 +525,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
     }
 
     private double getPrice(Material mat) {
-        String path = "custom." + mat.name() + ".price";
-        return getConfig().contains(path) ? getConfig().getDouble(path) : defaultPrice;
+        return customPrices.getOrDefault(mat.name(), defaultPrice);
     }
 
     private ItemStack createNavItem(String key) {
@@ -534,7 +572,24 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
     private class ExpireTask extends BukkitRunnable {
         public void run() {
             long now = Instant.now().getEpochSecond();
-            islandsItems.values().forEach(m -> m.values().removeIf(t -> t.expireAt <= now));
+            islandsItems.values().forEach(m -> {
+                if (m.values().removeIf(t -> t.expireAt <= now)) dirty.set(true);
+            });
+        }
+    }
+
+    /** Son lu en config : ancien nom (ENTITY_PLAYER_LEVELUP) ou clé (minecraft:entity.player.levelup). */
+    static Sound sound(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        String s = raw.trim();
+        if (s.indexOf(':') >= 0 || s.indexOf('.') >= 0) {
+            NamespacedKey key = NamespacedKey.fromString(s.toLowerCase(Locale.ROOT));
+            return key == null ? null : Registry.SOUND_EVENT.get(key);
+        }
+        try {
+            return (Sound) Sound.class.getField(s.toUpperCase(Locale.ROOT)).get(null);
+        } catch (ReflectiveOperationException | ClassCastException e) {
+            return null;
         }
     }
 
