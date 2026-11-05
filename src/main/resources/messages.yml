@@ -1,0 +1,16 @@
+# Messages envoyés aux joueurs par /shvoid et par le Marchand des abîmes.
+
+# Menu du Marchand des abîmes
+no-island: "&7[NPC] &8Marchand des Abîmes &8&l» &fVous n'avez pas encore d'île..."
+purchase-no-funds: "&7[NPC] &8Marchand des Abîmes &8&l» &fVous n'avez pas assez d'éclats d'echo."
+purchase-no-space: "&7[NPC] &8Marchand des Abîmes &8&l» &fVotre inventaire est plein."
+purchase-success: "&7[NPC] &8Marchand des Abîmes &8&l» &fL'abîme veut bien te rendre ton item, cette fois ci... &7(&aAchat réussi !&7)"
+# Compte à rebours d'un item arrivé à expiration
+expired: "&cExpiré"
+
+# Commande /shvoid
+player-only: "&7&l« &c&lSH &8&l» &7Cette commande est réservée aux &cjoueurs&7."
+no-permission: "&8&l« &f&lSH &8&l» &fCommande inconnuen, essayer autre chose."
+player-not-found: "&cJoueur non trouvé."
+target-no-island: "&cCe joueur n'a pas d'île."
+internal-error: "&7&l« &c&lSH &8&l» &7Une &cerreur &7est survenue, consultez la console."

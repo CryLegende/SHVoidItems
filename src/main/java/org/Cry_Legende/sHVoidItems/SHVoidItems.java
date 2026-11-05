@@ -5,12 +5,14 @@ import com.bgsoftware.superiorskyblock.api.SuperiorSkyblockAPI;
 import com.bgsoftware.superiorskyblock.api.island.Island;
 import com.destroystokyo.paper.event.entity.EntityRemoveFromWorldEvent;
 import net.milkbowl.vault.economy.Economy;
+import org.Cry_Legende.sHVoidItems.utils.ActionLog;
 import org.bukkit.*;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -60,6 +62,8 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
     private List<String> loreTemplate;
     private Map<String, MenuItemDef> menuItems;
     private double margin;
+    private String purchaseLogFile;
+    private String purchaseLogFormat;
     private final Map<UUID, BukkitTask> refreshTasks = new HashMap<>();
     private final Map<UUID, Integer> playerPages = new HashMap<>();
     private final Map<UUID, String> playerMenuTitles = new HashMap<>();
@@ -74,6 +78,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
     public void onEnable() {
         itemIdKey = new NamespacedKey(this, "void_item_id");
         saveDefaultConfig();
+        if (!new File(getDataFolder(), "messages.yml").exists()) saveResource("messages.yml", false);
         loadConfigValues();
         if (!setupEconomy()) return;
         getServer().getPluginManager().registerEvents(this, this);
@@ -94,7 +99,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof Player player)) {
-            sender.sendMessage(colorize(messages.getOrDefault("player-only", "&cCette commande ne peut être utilisée que par un joueur.")));
+            sender.sendMessage(colorize(messages.getOrDefault("player-only", "&7&l« &c&lSH &8&l» &7Cette commande est réservée aux &cjoueurs&7.")));
             return true;
         }
 
@@ -124,7 +129,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
                 return false;
             }
         } catch (Throwable t) {
-            player.sendMessage(ChatColor.RED + "Une erreur interne est survenue, consulte la console pour plus de détails.");
+            player.sendMessage(colorize(messages.getOrDefault("internal-error", "&7&l« &c&lSH &8&l» &7Une &cerreur &7est survenue, consultez la console.")));
             getLogger().log(Level.SEVERE, "Erreur lors de l'exécution de /" + label + " avec l'argument " + Arrays.toString(args), t);
         }
 
@@ -173,11 +178,14 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         buySound = sound(cfg.getString("options.buy-sound"));
         if (buySound == null) getLogger().warning("options.buy-sound invalide : aucun son ne sera joué à l'achat.");
         blacklist = cfg.getStringList("blacklist").stream().map(Material::matchMaterial).filter(Objects::nonNull).collect(Collectors.toSet());
-        messages = cfg.getConfigurationSection("messages").getKeys(false).stream()
-            .collect(Collectors.toMap(k -> k, k -> cfg.getString("messages." + k)));
+        YamlConfiguration messagesFile = YamlConfiguration.loadConfiguration(new File(getDataFolder(), "messages.yml"));
+        messages = messagesFile.getKeys(false).stream()
+            .collect(Collectors.toMap(k -> k, messagesFile::getString));
         countdownFormat = cfg.getString("countdown-format");
         loreTemplate = cfg.getStringList("lore");
         margin = cfg.getDouble("void-margin", 3.0);
+        purchaseLogFile = cfg.getString("logs.purchase.file", "rachats");
+        purchaseLogFormat = cfg.getString("logs.purchase.format", "%player% -> rachète %amount% %item% (%price% éclats d'écho)");
     }
 
     private void reloadData() {
@@ -453,6 +461,11 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
             p.getInventory().addItem(toGive);
             remaining -= amount;
         }
+        ActionLog.write(this, purchaseLogFile, purchaseLogFormat
+            .replace("%player%", p.getName())
+            .replace("%amount%", String.valueOf(ti.amount))
+            .replace("%item%", itemName(ti.template))
+            .replace("%price%", String.valueOf((int) Math.ceil(price))));
         if (buySound != null) p.playSound(p.getLocation(), buySound, 1f, 1f);
         p.sendMessage(colorize(messages.get("purchase-success")));
         p.closeInventory();
@@ -518,7 +531,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
     }
 
     private String formatCountdown(long secs) {
-        return secs <= 0 ? colorize("&cExpiré") : colorize(countdownFormat
+        return secs <= 0 ? colorize(messages.getOrDefault("expired", "&cExpiré")) : colorize(countdownFormat
             .replace("%h%", String.valueOf(secs / 3600))
             .replace("%m%", String.valueOf((secs % 3600) / 60))
             .replace("%s%", String.valueOf(secs % 60)));
@@ -539,6 +552,18 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
 
     private String colorize(String msg) {
         return ChatColor.translateAlternateColorCodes('&', msg);
+    }
+
+    /** Nom personnalisé de l'objet, sinon son type écrit lisiblement (Diamond Sword). */
+    private String itemName(ItemStack stack) {
+        ItemMeta meta = stack.getItemMeta();
+        if (meta != null && meta.hasDisplayName()) return meta.getDisplayName();
+        StringBuilder name = new StringBuilder();
+        for (String word : stack.getType().getKey().getKey().split("_")) {
+            if (name.length() > 0) name.append(' ');
+            name.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));
+        }
+        return name.toString();
     }
 
     private static class MenuItemDef {

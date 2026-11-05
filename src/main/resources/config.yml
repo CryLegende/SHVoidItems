@@ -1,4 +1,15 @@
-# Configuration SHVoidItems
+# SHVoidItems
+#
+# Garde les items tombés dans le vide d'une île et les propose au rachat dans le menu du Marchand des abîmes.
+# Les messages sont dans messages.yml.
+#
+# Commandes :
+#   /shvoid (alias /void)    Ouvre le menu des items tombés dans le vide de son île.
+#   /shvoid <joueur>         Ouvre le menu des items tombés dans le vide de l'île d'un joueur.
+#
+# Permissions :
+#   shvoiditems.use     Ouvrir son propre menu (accordée à tous par défaut).
+#   shvoiditems.admin   Ouvrir le menu d'un autre joueur (op par défaut).
 
 menu:
   title: "&8Marchand des abîmes &7(%page%/%max%)"
@@ -97,15 +108,14 @@ lore:
 options:
   buy-sound: "AMBIENT_BASALT_DELTAS_MOOD"
 
-messages:
-  no-island: "&7[NPC] &8Marchand des Abîmes &8&l» &fVous n'avez pas encore d'île..."
-  purchase-no-funds: "&7[NPC] &8Marchand des Abîmes &8&l» &fVous n'avez pas assez d'éclats d'echo."
-  purchase-no-space: "&7[NPC] &8Marchand des Abîmes &8&l» &fVotre inventaire est plein."
-  purchase-success: "&7[NPC] &8Marchand des Abîmes &8&l» &fL'abîme veut bien te rendre ton item, cette fois ci... &7(&aAchat réussi !&7)"
-
-  no-permission: "&8&l« &f&lSH &8&l» &fCommande inconnuen, essayer autre chose."
-  player-not-found: "&cJoueur non trouvé."
-  target-no-island: "&cCe joueur n'a pas d'île."
-
-
+# Marge en blocs autour d'une île où un item tombé dans le vide lui est encore attribué.
 void-margin: 3.0
+
+# Lignes écrites dans SHLogs (plugins/SHLogs/SHVoidItems/).
+# file : nom du fichier de log. format : ligne écrite.
+logs:
+  # Rachat d'un item par un joueur.
+  # Variables : %player%, %amount%, %item%, %price%.
+  purchase:
+    file: "rachats"
+    format: "%player% -> rachète %amount% %item% (%price% éclats d'écho)"

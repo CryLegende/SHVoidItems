@@ -16,11 +16,14 @@
 
 Garde les items tombés dans le vide d'une île, rachetables auprès du Marchand des abîmes.
 
+Chaque rachat est écrit dans le fichier `rachats` de SHLogs (`plugins/SHLogs/SHVoidItems/`).
+
 Utilisé sur : **Opale**.
 
 ## Dépendances
 
 - Obligatoires : `SuperiorSkyblock2`, `Vault`
+- Optionnelle : `SHLogs` (journal des rachats, sinon écrits dans la console)
 
 ## Commandes
 
@@ -41,7 +44,8 @@ Fichiers par défaut repris du serveur (secrets remplacés par `CHANGE_ME`). Cli
 
 <pre>
 plugins/SHVoidItems/
-└── <a href="src/main/resources/config.yml">config.yml</a>
+├── <a href="src/main/resources/config.yml">config.yml</a>
+└── <a href="src/main/resources/messages.yml">messages.yml</a>
 </pre>
 
 ## Compilation
