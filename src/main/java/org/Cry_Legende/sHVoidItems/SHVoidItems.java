@@ -248,14 +248,18 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         ItemStack dropped = it.getItemStack().clone();
         dropped.setAmount(1);
         Map<String, TrackedItem> map = islandsItems.computeIfAbsent(id, k -> new ConcurrentHashMap<>());
-        map.values().stream()
-            .filter(t -> t.template.isSimilar(dropped))
-            .findFirst()
-            .ifPresentOrElse(t -> t.amount += it.getItemStack().getAmount(),
-                () -> {
-                    String key = UUID.randomUUID().toString();
-                    map.put(key, new TrackedItem(key, dropped, it.getItemStack().getAmount(), Instant.now().getEpochSecond() + defaultExpireSeconds));
-                });
+        int quantity = it.getItemStack().getAmount();
+        // Les mondes tiquent en parallèle : la recherche puis l'ajout (ou la création) se font sous le verrou de la map de l'île
+        synchronized (map) {
+            map.values().stream()
+                .filter(t -> t.template.isSimilar(dropped))
+                .findFirst()
+                .ifPresentOrElse(t -> t.amount += quantity,
+                    () -> {
+                        String key = UUID.randomUUID().toString();
+                        map.put(key, new TrackedItem(key, dropped, quantity, Instant.now().getEpochSecond() + defaultExpireSeconds));
+                    });
+        }
         dirty.set(true);
     }
 
@@ -583,7 +587,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
     private static class TrackedItem {
         final String id; // clé dans la map de l'île, posée en PDC sur l'icône du menu
         ItemStack template;
-        int amount;
+        volatile int amount; // modifié sous verrou par les threads des mondes, lu par la sauvegarde asynchrone
         long expireAt;
 
         TrackedItem(String id, ItemStack t, int a, long e) {
