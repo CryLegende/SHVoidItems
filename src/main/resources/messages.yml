@@ -14,3 +14,7 @@ no-permission: "&8&l« &f&lSH &8&l» &fCommande inconnuen, essayer autre chose."
 player-not-found: "&cJoueur non trouvé."
 target-no-island: "&cCe joueur n'a pas d'île."
 internal-error: "&7&l« &c&lSH &8&l» &7Une &cerreur &7est survenue, consultez la console."
+
+# Mode réseau : île hébergée par un autre serveur
+network-forward: "&7&l« &e&lSH &8&l» &7Ton île est sur le serveur &e{serveur}&7 : le menu s'ouvre &eà ton arrivée&7."
+network-other-server: "&7&l« &6&lSH &8&l» &7L'île de ce joueur est sur le serveur &6{serveur}&7 : son menu s'ouvre depuis là-bas."

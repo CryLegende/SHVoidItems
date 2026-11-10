@@ -23,7 +23,19 @@ Utilisé sur : **Opale**.
 ## Dépendances
 
 - Obligatoires : `SuperiorSkyblock2`, `Vault`
-- Optionnelle : `SHLogs` (journal des rachats, sinon écrits dans la console)
+- Optionnelles : `SHLogs` (journal des rachats, sinon écrits dans la console), `SHNetwork` et `SHSkyBridge` (mode réseau)
+
+## Mode réseau
+
+Avec **SHSkyBridge** et **SHNetwork** installés (plusieurs serveurs se partagent les îles, chacune étant hébergée par un seul) et `reseau.actif: true`
+(valeur par défaut) :
+
+- chaque serveur ne garde dans son `data.yml` que les items tombés dans le vide des îles qu'il héberge ; les entrées des autres îles ne sont ni modifiées ni expirées ici ;
+- les entrées d'une île suivent l'île quand SHSkyBridge la déplace (`/skybridge deplacer`) ;
+- `/shvoid` envoie le joueur sur le serveur de son île quand elle est ailleurs : le menu s'ouvre à son arrivée (durée de validité `reseau.arrivee-secondes`) ;
+- `/shvoid <joueur>` indique le serveur de l'île quand elle n'est pas hébergée ici.
+
+Sans eux, ou sans la clé `reseau`, le plugin se comporte comme avant.
 
 ## Commandes
 

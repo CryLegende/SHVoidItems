@@ -119,3 +119,13 @@ logs:
   purchase:
     file: "rachats"
     format: "%player% -> rachète %amount% %item% (%price% éclats d'écho)"
+
+# Mode réseau. Actif seulement si SHSkyBridge et SHNetwork sont installés (plusieurs serveurs se partagent les îles,
+# chacune étant hébergée par un seul) et 'actif' vaut true. Un serveur ne garde les items tombés dans le vide que des
+# îles qu'il héberge et n'efface rien des autres ; /shvoid envoie le joueur sur le serveur de son île, où le menu s'ouvre
+# à l'arrivée. Les items d'une île suivent l'île quand SHSkyBridge la déplace. Sans eux, rien de ceci n'est utilisé.
+# Demande un redémarrage.
+reseau:
+  actif: true
+  # Durée, en secondes, pendant laquelle l'ouverture du menu reste valable après l'annonce du joueur au serveur de son île
+  arrivee-secondes: 60

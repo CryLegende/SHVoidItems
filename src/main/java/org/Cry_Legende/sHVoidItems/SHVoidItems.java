@@ -5,6 +5,8 @@ import com.bgsoftware.superiorskyblock.api.SuperiorSkyblockAPI;
 import com.bgsoftware.superiorskyblock.api.island.Island;
 import com.destroystokyo.paper.event.entity.EntityRemoveFromWorldEvent;
 import net.milkbowl.vault.economy.Economy;
+import org.Cry_Legende.sHVoidItems.network.NetworkLink;
+import org.Cry_Legende.sHVoidItems.network.ShNetworkLink;
 import org.Cry_Legende.sHVoidItems.utils.ActionLog;
 import org.bukkit.*;
 import org.bukkit.command.Command;
@@ -20,6 +22,7 @@ import org.bukkit.event.Listener;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
@@ -73,6 +76,12 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
     // data.yml n'est réécrit que si quelque chose a changé, et jamais avant d'avoir été relu
     private final AtomicBoolean dirty = new AtomicBoolean();
     private volatile boolean dataLoaded;
+    // Non nul seulement avec SHSkyBridge et SHNetwork (plusieurs serveurs se partagent les îles) : un serveur ne garde
+    // les items tombés dans le vide que des îles qu'il héberge, et n'en retire rien pour les autres
+    private NetworkLink network;
+    // Joueurs envoyés ici par un autre serveur pour ouvrir le menu de leur île : joueur -> fin de validité (ms)
+    private final Map<UUID, Long> pendingMenus = new ConcurrentHashMap<>();
+    private long arrivalKeepMs = 60_000L;
 
     @Override
     public void onEnable() {
@@ -87,6 +96,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         if (!dataFile.exists()) saveResource("data.yml", false);
         reloadData();
         dataLoaded = true;
+        enableNetwork();
         new BukkitRunnable() {
             public void run() {
                 saveData();
@@ -94,6 +104,55 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         }.runTaskTimerAsynchronously(this, 1200, 1200);
         new ExpireTask().runTaskTimerAsynchronously(this, 0, 1200);
         getLogger().info("SHVoidItems activé.");
+    }
+
+    /**
+     * Passe en mode réseau si SHSkyBridge et SHNetwork sont installés et 'reseau.actif' est vrai. Les classes qui touchent
+     * à eux ne sont chargées qu'ici : sans eux, le plugin se comporte exactement comme avant.
+     */
+    private void enableNetwork() {
+        if (!getConfig().getBoolean("reseau.actif", true)) return;
+        if (!Bukkit.getPluginManager().isPluginEnabled("SHNetwork") || !Bukkit.getPluginManager().isPluginEnabled("SHSkyBridge")) return;
+        try {
+            NetworkLink link = ShNetworkLink.open();
+            arrivalKeepMs = Math.max(5, getConfig().getInt("reseau.arrivee-secondes", 60)) * 1000L;
+            link.listenArrivals((player, island) -> {
+                if (link.isHostedHere(island)) pendingMenus.put(player, System.currentTimeMillis() + arrivalKeepMs);
+            });
+            network = link;
+            getLogger().info("SHSkyBridge détecté : les items tombés dans le vide ne concernent que les îles hébergées par ce serveur.");
+        } catch (Exception | LinkageError e) {
+            getLogger().log(Level.SEVERE, "SHSkyBridge ou SHNetwork présent mais inutilisable, fonctionnement d'un serveur seul : " + e);
+        }
+    }
+
+    /** Vrai si l'île est hébergée par ce serveur (toujours vrai sans mode réseau). */
+    private boolean isHosted(UUID island) {
+        return network == null || network.isHostedHere(island);
+    }
+
+    /**
+     * Île de ce joueur hébergée par un autre serveur : il y est envoyé, et son menu s'y ouvre à l'arrivée.
+     * Vrai si le joueur est parti (ou va partir), faux si le menu peut s'ouvrir ici.
+     */
+    private boolean forwardToHost(Player player) {
+        if (network == null) return false;
+        Island island = SuperiorSkyblockAPI.getPlayer(player).getIsland();
+        if (island == null || network.isHostedHere(island.getUniqueId())) return false;
+        player.sendMessage(colorize(messages.get("network-forward").replace("{serveur}", network.hostOf(island.getUniqueId()))));
+        network.sendToHost(player, island.getUniqueId());
+        return true;
+    }
+
+    @EventHandler
+    public void onJoin(PlayerJoinEvent e) {
+        Long until = pendingMenus.remove(e.getPlayer().getUniqueId());
+        if (until == null || until < System.currentTimeMillis()) return;
+        Player player = e.getPlayer();
+        // Un instant après l'arrivée : le joueur doit être chargé (inventaire synchronisé) avant d'ouvrir le menu
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            if (player.isOnline()) openVoidMenu(player, 1);
+        }, 20L);
     }
 
     @Override
@@ -105,7 +164,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
 
         try {
             if (args.length == 0) {
-                openVoidMenu(player, 1);
+                if (!forwardToHost(player)) openVoidMenu(player, 1);
             } else if (args.length == 1) {
                 if (!player.hasPermission("shvoiditems.admin")) {
                     player.sendMessage(colorize(messages.getOrDefault("no-permission", "&cVous n'avez pas la permission d'utiliser cette commande.")));
@@ -124,6 +183,10 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
                     return true;
                 }
 
+                if (!isHosted(targetIsland.getUniqueId())) {
+                    player.sendMessage(colorize(messages.get("network-other-server").replace("{serveur}", network.hostOf(targetIsland.getUniqueId()))));
+                    return true;
+                }
                 openOtherVoidMenu(player, target, targetIsland, 1);
             } else {
                 return false;
@@ -181,6 +244,13 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         YamlConfiguration messagesFile = YamlConfiguration.loadConfiguration(new File(getDataFolder(), "messages.yml"));
         messages = messagesFile.getKeys(false).stream()
             .collect(Collectors.toMap(k -> k, messagesFile::getString));
+        // Les textes absents d'un messages.yml plus ancien prennent la valeur du jar
+        try (java.io.InputStreamReader defaults = new java.io.InputStreamReader(Objects.requireNonNull(getResource("messages.yml")), java.nio.charset.StandardCharsets.UTF_8)) {
+            YamlConfiguration jarMessages = YamlConfiguration.loadConfiguration(defaults);
+            for (String key : jarMessages.getKeys(false)) messages.putIfAbsent(key, jarMessages.getString(key));
+        } catch (IOException | RuntimeException e) {
+            getLogger().log(Level.WARNING, "messages.yml de référence illisible : " + e.getMessage());
+        }
         countdownFormat = cfg.getString("countdown-format");
         loreTemplate = cfg.getStringList("lore");
         margin = cfg.getDouble("void-margin", 3.0);
@@ -245,6 +315,8 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         Island isl = getIslandWithMargin(it.getLocation());
         if (isl == null || blacklist.contains(it.getItemStack().getType())) return;
         UUID id = isl.getUniqueId();
+        // Chunk d'une île hébergée ailleurs, chargé ici par hasard : ses items sont ceux de son hôte
+        if (!isHosted(id)) return;
         ItemStack dropped = it.getItemStack().clone();
         dropped.setAmount(1);
         Map<String, TrackedItem> map = islandsItems.computeIfAbsent(id, k -> new ConcurrentHashMap<>());
@@ -601,8 +673,9 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
     private class ExpireTask extends BukkitRunnable {
         public void run() {
             long now = Instant.now().getEpochSecond();
-            islandsItems.values().forEach(m -> {
-                if (m.values().removeIf(t -> t.expireAt <= now)) dirty.set(true);
+            // Les entrées d'une île hébergée ailleurs sont gardées telles quelles : c'est son hôte qui les fait expirer
+            islandsItems.forEach((id, m) -> {
+                if (isHosted(id) && m.values().removeIf(t -> t.expireAt <= now)) dirty.set(true);
             });
         }
     }
