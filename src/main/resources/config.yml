@@ -1,11 +1,15 @@
 # SHVoidItems
 #
 # Garde les items tombés dans le vide d'une île et les propose au rachat dans le menu du Marchand des abîmes.
+# Un item qui sort du monde par le bas, à moins de void-margin blocs d'une île, est retenu pour cette île : les items
+# identiques se cumulent, et l'ensemble disparaît defaults.expire-seconds après le premier. Avec WildStacker, c'est la
+# quantité réelle d'une pile au sol qui est retenue. Avec SHInventoryPages, un rachat se range aussi dans les autres pages
+# de l'inventaire du joueur, et non plus seulement dans l'inventaire porté.
 # Les messages sont dans messages.yml.
 #
 # Commandes :
 #   /shvoid (alias /void)    Ouvre le menu des items tombés dans le vide de son île.
-#   /shvoid <joueur>         Ouvre le menu des items tombés dans le vide de l'île d'un joueur.
+#   /shvoid <joueur>         Ouvre le menu des items tombés dans le vide de l'île d'un joueur (complétion des joueurs en ligne).
 #
 # Permissions :
 #   shvoiditems.use     Ouvrir son propre menu (accordée à tous par défaut).
@@ -13,7 +17,11 @@
 
 menu:
   title: "&8Marchand des abîmes &7(%page%/%max%)"
+  # Items par page, de 1 à 54 (les boutons ci-dessous prennent leur propre emplacement : 45 leur laisse la dernière ligne)
   items-per-page: 45
+  # Période de mise à jour du menu ouvert (compte à rebours, quantités), en ticks
+  refresh-ticks: 20
+  # Boutons : material, display-name, slot (0 à 53) et, pour 'close', la commande lancée au clic (sinon le menu se ferme)
   items:
     prev-page:
       material: "ARROW"
@@ -25,18 +33,21 @@ menu:
       slot: 53
     close:
       material: "PAPER"
-      display-name: "&C⤾ Retour &7(Clic)"
+      display-name: "&c⤾ Retour &7(Clic)"
       slot: 49
       command: "dm open island_more"
 
+# Monnaie des rachats. type : "item" (autant d'exemplaires de currency.item que le prix) ou "money" (argent Vault)
 currency:
   type: "item"
   item: "ECHO_SHARD"
 
+# expire-seconds : durée de rétention d'un item avant qu'il disparaisse. price : prix d'un rachat, quelle que soit la quantité.
 defaults:
   expire-seconds: 86400
   price: 1
 
+# Prix par matériau (nom du matériau), à la place de defaults.price
 custom:
   SPAWNER:
     price: 5
@@ -50,7 +61,6 @@ custom:
     price: 5
   CHEST:
     price: 4
-
 
   DIAMOND_SWORD:
     price: 4
@@ -90,12 +100,15 @@ custom:
   NETHERITE_HOE:
     price: 10
 
+# Matériaux jamais retenus
 blacklist:
   - STONE
   - DIRT
 
+# Compte à rebours de %countdown%
 countdown-format: "&e%h%h %m%m %s%s"
 
+# Lore des items du menu. Variables : %lore% (lore d'origine de l'item), %quantity%, %countdown%, %price%.
 lore:
   - "%lore%"
   - ""
@@ -106,10 +119,16 @@ lore:
   - "&7&o(( &5&oCliquez pour récupérer &7&o))"
 
 options:
-  buy-sound: "AMBIENT_BASALT_DELTAS_MOOD"
+  # Son joué au rachat (clé du son), vide pour aucun
+  buy-sound: "minecraft:ambient.basalt_deltas.mood"
 
 # Marge en blocs autour d'une île où un item tombé dans le vide lui est encore attribué.
 void-margin: 3.0
+
+# data.yml : écriture (seulement si quelque chose a changé) et retrait des items expirés, en secondes.
+data:
+  save-seconds: 60
+  expire-check-seconds: 60
 
 # Lignes écrites dans SHLogs (plugins/SHLogs/SHVoidItems/).
 # file : nom du fichier de log. format : ligne écrite.

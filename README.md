@@ -16,6 +16,11 @@
 
 Garde les items tombés dans le vide d'une île, rachetables auprès du Marchand des abîmes.
 
+Un item qui sort du monde par le bas, à moins de `void-margin` blocs d'une île, est retenu pour cette île : les items identiques se
+cumulent et l'ensemble disparaît `defaults.expire-seconds` après le premier. Les membres de l'île les rachètent dans un menu de 54
+emplacements (`/shvoid`) contre des éclats d'écho, ou de l'argent Vault selon `currency.type`. Le prix se règle par matériau
+(`custom.<MATÉRIAU>.price`) et `blacklist` écarte des matériaux.
+
 Chaque rachat est écrit dans le fichier `rachats` de SHLogs (`plugins/SHLogs/SHVoidItems/`).
 
 Utilisé sur : **Opale**.
@@ -23,7 +28,11 @@ Utilisé sur : **Opale**.
 ## Dépendances
 
 - Obligatoires : `SuperiorSkyblock2`, `Vault`
-- Optionnelles : `SHLogs` (journal des rachats, sinon écrits dans la console), `SHNetwork` et `SHSkyBridge` (mode réseau)
+- Optionnelles :
+  - `SHLogs` : journal des rachats, sinon écrits dans la console ;
+  - `WildStacker` : la quantité retenue pour une pile d'items au sol est sa quantité réelle, et non celle, plafonnée, de l'entité ;
+  - `SHInventoryPages` : un rachat se range dans l'inventaire porté puis dans les autres pages du joueur, et ne demande plus d'emplacements libres dans l'inventaire porté ;
+  - `SHNetwork` et `SHSkyBridge` : mode réseau
 
 ## Mode réseau
 
@@ -41,7 +50,8 @@ Sans eux, ou sans la clé `reseau`, le plugin se comporte comme avant.
 
 | Commande | Alias | Description | Permission |
 |---|---|---|---|
-| `/shvoid` | `/void` | Ouvre le menu des Void Items pour vous ou pour un autre joueur (admin) | `shvoiditems.use` |
+| `/shvoid` | `/void` | Ouvre le menu des Void Items de votre île | `shvoiditems.use` |
+| `/shvoid <joueur>` | `/void <joueur>` | Ouvre le menu des Void Items de l'île d'un joueur en ligne (complétion des noms) | `shvoiditems.admin` |
 
 ## Permissions
 

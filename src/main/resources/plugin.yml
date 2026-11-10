@@ -4,8 +4,9 @@ main: org.Cry_Legende.sHVoidItems.SHVoidItems
 api-version: '1.20'
 author: Cry_Legende
 depend: [SuperiorSkyblock2, Vault]
-# SHNetwork et SHSkyBridge sont facultatifs : sans eux, le plugin se comporte comme sur un serveur seul.
-softdepend: [SHLogs, SHNetwork, SHSkyBridge]
+# Facultatifs : SHLogs (journal des rachats), WildStacker (quantité réelle des piles au sol), SHInventoryPages (rachats rangés
+# dans toutes les pages du joueur). SHNetwork et SHSkyBridge : sans eux, le plugin se comporte comme sur un serveur seul.
+softdepend: [SHLogs, WildStacker, SHInventoryPages, SHNetwork, SHSkyBridge]
 
 commands:
   shvoid:

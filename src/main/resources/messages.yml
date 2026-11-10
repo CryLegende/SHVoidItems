@@ -7,12 +7,14 @@ purchase-no-space: "&7[NPC] &8Marchand des Abîmes &8&l» &fVotre inventaire est
 purchase-success: "&7[NPC] &8Marchand des Abîmes &8&l» &fL'abîme veut bien te rendre ton item, cette fois ci... &7(&aAchat réussi !&7)"
 # Compte à rebours d'un item arrivé à expiration
 expired: "&cExpiré"
+# Valeur de %currency% dans purchase-no-funds quand la monnaie est l'argent (currency.type: money)
+currency-money: "argent"
 
 # Commande /shvoid
 player-only: "&7&l« &c&lSH &8&l» &7Cette commande est réservée aux &cjoueurs&7."
-no-permission: "&8&l« &f&lSH &8&l» &fCommande inconnuen, essayer autre chose."
-player-not-found: "&cJoueur non trouvé."
-target-no-island: "&cCe joueur n'a pas d'île."
+no-permission: "&8&l« &f&lSH &8&l» &fCommande inconnue, essayer autre chose."
+player-not-found: "&7&l« &c&lSH &8&l» &7Joueur &cintrouvable&7."
+target-no-island: "&7&l« &c&lSH &8&l» &7Ce joueur n'a &cpas d'île&7."
 internal-error: "&7&l« &c&lSH &8&l» &7Une &cerreur &7est survenue, consultez la console."
 
 # Mode réseau : île hébergée par un autre serveur

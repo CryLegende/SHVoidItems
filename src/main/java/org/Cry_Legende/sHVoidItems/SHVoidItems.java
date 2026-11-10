@@ -1,26 +1,40 @@
 package org.Cry_Legende.sHVoidItems;
 
-import com.bgsoftware.superiorskyblock.api.world.Dimension;
 import com.bgsoftware.superiorskyblock.api.SuperiorSkyblockAPI;
 import com.bgsoftware.superiorskyblock.api.island.Island;
-import com.destroystokyo.paper.event.entity.EntityRemoveFromWorldEvent;
+import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.format.TextDecoration;
+import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
+import net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer;
 import net.milkbowl.vault.economy.Economy;
+import org.Cry_Legende.sHVoidItems.give.InventoryGiver;
+import org.Cry_Legende.sHVoidItems.give.ItemGiver;
+import org.Cry_Legende.sHVoidItems.give.PagesGiver;
 import org.Cry_Legende.sHVoidItems.network.NetworkLink;
 import org.Cry_Legende.sHVoidItems.network.ShNetworkLink;
+import org.Cry_Legende.sHVoidItems.stack.StackAmounts;
+import org.Cry_Legende.sHVoidItems.stack.WildStackerAmounts;
 import org.Cry_Legende.sHVoidItems.utils.ActionLog;
-import org.bukkit.*;
+import org.bukkit.Bukkit;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.NamespacedKey;
+import org.bukkit.Registry;
+import org.bukkit.Sound;
+import org.bukkit.World;
 import org.bukkit.command.Command;
-import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.command.TabExecutor;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Item;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityRemoveEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
-import org.bukkit.event.inventory.InventoryCloseEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.inventory.Inventory;
@@ -29,53 +43,65 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
-import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.scheduler.BukkitTask;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.Reader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.StandardCopyOption;
-import java.time.Instant;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Level;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
-public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor {
+public class SHVoidItems extends JavaPlugin implements Listener, TabExecutor {
+
+    private static final String ADMIN_PERMISSION = "shvoiditems.admin";
+    // Ligne de 'lore' remplacée par le lore d'origine de l'item
+    private static final String ORIGINAL_LORE = "%lore%";
+    private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.legacyAmpersand();
 
     private Economy economy;
     private final Map<UUID, Map<String, TrackedItem>> islandsItems = new ConcurrentHashMap<>();
     private File dataFile;
-    private org.bukkit.configuration.file.YamlConfiguration dataConfig;
-    private String menuTitleTemplate;
-    private String menuTitlePrefix;
+    private NamespacedKey itemIdKey;
+    // data.yml n'est réécrit que si quelque chose a changé, et jamais avant d'avoir été relu
+    private final AtomicBoolean dirty = new AtomicBoolean();
+    private volatile boolean dataLoaded;
+
+    private String menuTitle;
     private int itemsPerPage;
+    private Map<String, MenuItemDef> menuItems;
     private String currencyType;
     private Material currencyItem;
     private long defaultExpireSeconds;
     private double defaultPrice;
-    private Map<String, Double> customPrices = new HashMap<>();
+    private Map<String, Double> customPrices;
     private Sound buySound;
     private Set<Material> blacklist;
     private Map<String, String> messages;
     private String countdownFormat;
     private List<String> loreTemplate;
-    private Map<String, MenuItemDef> menuItems;
     private double margin;
     private String purchaseLogFile;
     private String purchaseLogFormat;
-    private final Map<UUID, BukkitTask> refreshTasks = new HashMap<>();
-    private final Map<UUID, Integer> playerPages = new HashMap<>();
-    private final Map<UUID, String> playerMenuTitles = new HashMap<>();
-    // Île affichée dans le menu de chaque viewer (la sienne, ou celle d'un joueur pour /shvoid <joueur>)
-    private final Map<UUID, Island> viewedIslands = new HashMap<>();
-    private NamespacedKey itemIdKey;
-    // data.yml n'est réécrit que si quelque chose a changé, et jamais avant d'avoir été relu
-    private final AtomicBoolean dirty = new AtomicBoolean();
-    private volatile boolean dataLoaded;
+
+    // Quantité réelle des piles au sol : celle de l'entité, ou celle de WildStacker quand il est là
+    private StackAmounts stackAmounts = (item, visible) -> visible;
+    // Remise des items rachetés : l'inventaire porté, ou toutes les pages du joueur avec SHInventoryPages
+    private ItemGiver giver = new InventoryGiver();
     // Non nul seulement avec SHSkyBridge et SHNetwork (plusieurs serveurs se partagent les îles) : un serveur ne garde
     // les items tombés dans le vide que des îles qu'il héberge, et n'en retire rien pour les autres
     private NetworkLink network;
@@ -91,19 +117,54 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         loadConfigValues();
         if (!setupEconomy()) return;
         getServer().getPluginManager().registerEvents(this, this);
-        getCommand("shvoid").setExecutor(this);
+        Objects.requireNonNull(getCommand("shvoid")).setExecutor(this);
         dataFile = new File(getDataFolder(), "data.yml");
         if (!dataFile.exists()) saveResource("data.yml", false);
-        reloadData();
+        loadData();
         dataLoaded = true;
+        enableStackAmounts();
+        enableGiver();
         enableNetwork();
-        new BukkitRunnable() {
-            public void run() {
-                saveData();
-            }
-        }.runTaskTimerAsynchronously(this, 1200, 1200);
-        new ExpireTask().runTaskTimerAsynchronously(this, 0, 1200);
+
+        FileConfiguration cfg = getConfig();
+        long saveTicks = Math.max(1, cfg.getLong("data.save-seconds")) * 20L;
+        long expireTicks = Math.max(1, cfg.getLong("data.expire-check-seconds")) * 20L;
+        long refreshTicks = Math.max(1, cfg.getLong("menu.refresh-ticks"));
+        getServer().getScheduler().runTaskTimerAsynchronously(this, this::saveData, saveTicks, saveTicks);
+        getServer().getScheduler().runTaskTimerAsynchronously(this, this::purgeExpired, 0, expireTicks);
+        getServer().getScheduler().runTaskTimer(this, this::refreshMenus, refreshTicks, refreshTicks);
         getLogger().info("SHVoidItems activé.");
+    }
+
+    @Override
+    public void onDisable() {
+        saveData();
+        // Une fois les écouteurs retirés, un menu resté ouvert ne serait plus protégé
+        for (Player viewer : getServer().getOnlinePlayers()) {
+            if (menuOf(viewer) != null) viewer.closeInventory();
+        }
+    }
+
+    /** Lit les quantités réelles des piles avec WildStacker, s'il est activé : sa classe n'est chargée qu'ici. */
+    private void enableStackAmounts() {
+        if (!getServer().getPluginManager().isPluginEnabled("WildStacker")) return;
+        try {
+            stackAmounts = WildStackerAmounts.open();
+            getLogger().info("WildStacker détecté : la quantité réelle des piles d'items est lue avec son API.");
+        } catch (Exception | LinkageError e) {
+            getLogger().log(Level.SEVERE, "WildStacker présent mais inutilisable, quantité des entités utilisée : " + e);
+        }
+    }
+
+    /** Range les items rachetés dans toutes les pages du joueur avec SHInventoryPages, s'il est activé. */
+    private void enableGiver() {
+        if (!getServer().getPluginManager().isPluginEnabled("SHInventoryPages")) return;
+        try {
+            giver = PagesGiver.open();
+            getLogger().info("SHInventoryPages détecté : les items rachetés sont rangés dans toutes les pages du joueur.");
+        } catch (Exception | LinkageError e) {
+            getLogger().log(Level.SEVERE, "SHInventoryPages présent mais inutilisable, inventaire porté seul utilisé : " + e);
+        }
     }
 
     /**
@@ -132,14 +193,14 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
     }
 
     /**
-     * Île de ce joueur hébergée par un autre serveur : il y est envoyé, et son menu s'y ouvre à l'arrivée.
+     * Île de ce joueur hébergée par un autre serveur : il y est envoyé, et son menu s'ouvre à l'arrivée.
      * Vrai si le joueur est parti (ou va partir), faux si le menu peut s'ouvrir ici.
      */
     private boolean forwardToHost(Player player) {
         if (network == null) return false;
         Island island = SuperiorSkyblockAPI.getPlayer(player).getIsland();
         if (island == null || network.isHostedHere(island.getUniqueId())) return false;
-        player.sendMessage(colorize(messages.get("network-forward").replace("{serveur}", network.hostOf(island.getUniqueId()))));
+        send(player, "network-forward", "{serveur}", network.hostOf(island.getUniqueId()));
         network.sendToHost(player, island.getUniqueId());
         return true;
     }
@@ -150,59 +211,42 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         if (until == null || until < System.currentTimeMillis()) return;
         Player player = e.getPlayer();
         // Un instant après l'arrivée : le joueur doit être chargé (inventaire synchronisé) avant d'ouvrir le menu
-        Bukkit.getScheduler().runTaskLater(this, () -> {
-            if (player.isOnline()) openVoidMenu(player, 1);
+        getServer().getScheduler().runTaskLater(this, () -> {
+            if (player.isOnline()) openOwnMenu(player);
         }, 20L);
     }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (!(sender instanceof Player player)) {
-            sender.sendMessage(colorize(messages.getOrDefault("player-only", "&7&l« &c&lSH &8&l» &7Cette commande est réservée aux &cjoueurs&7.")));
+            send(sender, "player-only");
             return true;
         }
+        if (args.length > 1) return false;
 
         try {
             if (args.length == 0) {
-                if (!forwardToHost(player)) openVoidMenu(player, 1);
-            } else if (args.length == 1) {
-                if (!player.hasPermission("shvoiditems.admin")) {
-                    player.sendMessage(colorize(messages.getOrDefault("no-permission", "&cVous n'avez pas la permission d'utiliser cette commande.")));
-                    return true;
-                }
-
-                Player target = Bukkit.getPlayerExact(args[0]);
-                if (target == null) {
-                    player.sendMessage(colorize(messages.getOrDefault("player-not-found", "&cJoueur non trouvé.")));
-                    return true;
-                }
-
-                Island targetIsland = SuperiorSkyblockAPI.getPlayer(target).getIsland();
-                if (targetIsland == null) {
-                    player.sendMessage(colorize(messages.getOrDefault("target-no-island", "&cCe joueur n'a pas d'île.")));
-                    return true;
-                }
-
-                if (!isHosted(targetIsland.getUniqueId())) {
-                    player.sendMessage(colorize(messages.get("network-other-server").replace("{serveur}", network.hostOf(targetIsland.getUniqueId()))));
-                    return true;
-                }
-                openOtherVoidMenu(player, target, targetIsland, 1);
+                if (!forwardToHost(player)) openOwnMenu(player);
             } else {
-                return false;
+                openMenuOf(player, args[0]);
             }
-        } catch (Throwable t) {
-            player.sendMessage(colorize(messages.getOrDefault("internal-error", "&7&l« &c&lSH &8&l» &7Une &cerreur &7est survenue, consultez la console.")));
-            getLogger().log(Level.SEVERE, "Erreur lors de l'exécution de /" + label + " avec l'argument " + Arrays.toString(args), t);
+        } catch (Exception e) {
+            send(player, "internal-error");
+            getLogger().log(Level.SEVERE, "Erreur lors de l'exécution de /" + label + " avec l'argument " + Arrays.toString(args), e);
         }
-
         return true;
     }
 
     @Override
-    public void onDisable() {
-        saveData();
-        refreshTasks.values().forEach(BukkitTask::cancel);
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        if (args.length != 1 || !sender.hasPermission(ADMIN_PERMISSION)) return List.of();
+        String start = args[0].toLowerCase(Locale.ROOT);
+        return getServer().getOnlinePlayers().stream()
+            .filter(target -> !(sender instanceof Player viewer) || viewer.canSee(target))
+            .map(Player::getName)
+            .filter(name -> name.toLowerCase(Locale.ROOT).startsWith(start))
+            .sorted(String.CASE_INSENSITIVE_ORDER)
+            .toList();
     }
 
     private boolean setupEconomy() {
@@ -218,17 +262,12 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
 
     private void loadConfigValues() {
         FileConfiguration cfg = getConfig();
-        menuTitleTemplate = cfg.getString("menu.title");
-        menuTitlePrefix = colorize(menuTitleTemplate.split("%")[0]);
-        itemsPerPage = cfg.getInt("menu.items-per-page");
-        menuItems = cfg.getConfigurationSection("menu.items").getKeys(false).stream()
-            .collect(Collectors.toMap(k -> k, k -> {
-                ConfigurationSection s = cfg.getConfigurationSection("menu.items." + k);
-                String command = s.getString("command", null);
-                return new MenuItemDef(Material.matchMaterial(s.getString("material")), s.getString("display-name"), s.getInt("slot"), command);
-            }));
+        menuTitle = cfg.getString("menu.title", "");
+        itemsPerPage = Math.min(VoidMenu.SIZE, Math.max(1, cfg.getInt("menu.items-per-page")));
+        menuItems = loadMenuItems(cfg.getConfigurationSection("menu.items"));
         currencyType = cfg.getString("currency.type");
-        currencyItem = Material.matchMaterial(cfg.getString("currency.item"));
+        currencyItem = Material.matchMaterial(cfg.getString("currency.item", ""));
+        if ("item".equals(currencyType) && currencyItem == null) getLogger().warning("currency.item invalide : aucun achat ne sera possible.");
         defaultExpireSeconds = cfg.getLong("defaults.expire-seconds");
         defaultPrice = cfg.getDouble("defaults.price");
         customPrices = new HashMap<>();
@@ -241,38 +280,73 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         buySound = sound(cfg.getString("options.buy-sound"));
         if (buySound == null) getLogger().warning("options.buy-sound invalide : aucun son ne sera joué à l'achat.");
         blacklist = cfg.getStringList("blacklist").stream().map(Material::matchMaterial).filter(Objects::nonNull).collect(Collectors.toSet());
-        YamlConfiguration messagesFile = YamlConfiguration.loadConfiguration(new File(getDataFolder(), "messages.yml"));
-        messages = messagesFile.getKeys(false).stream()
-            .collect(Collectors.toMap(k -> k, messagesFile::getString));
-        // Les textes absents d'un messages.yml plus ancien prennent la valeur du jar
-        try (java.io.InputStreamReader defaults = new java.io.InputStreamReader(Objects.requireNonNull(getResource("messages.yml")), java.nio.charset.StandardCharsets.UTF_8)) {
-            YamlConfiguration jarMessages = YamlConfiguration.loadConfiguration(defaults);
-            for (String key : jarMessages.getKeys(false)) messages.putIfAbsent(key, jarMessages.getString(key));
-        } catch (IOException | RuntimeException e) {
-            getLogger().log(Level.WARNING, "messages.yml de référence illisible : " + e.getMessage());
-        }
-        countdownFormat = cfg.getString("countdown-format");
+        messages = loadMessages();
+        countdownFormat = cfg.getString("countdown-format", "");
         loreTemplate = cfg.getStringList("lore");
-        margin = cfg.getDouble("void-margin", 3.0);
+        margin = cfg.getDouble("void-margin");
         purchaseLogFile = cfg.getString("logs.purchase.file", "rachats");
         purchaseLogFormat = cfg.getString("logs.purchase.format", "%player% -> rachète %amount% %item% (%price% éclats d'écho)");
     }
 
-    private void reloadData() {
-        dataConfig = org.bukkit.configuration.file.YamlConfiguration.loadConfiguration(dataFile);
+    private Map<String, MenuItemDef> loadMenuItems(ConfigurationSection section) {
+        Map<String, MenuItemDef> defs = new HashMap<>();
+        if (section == null) return defs;
+        for (String key : section.getKeys(false)) {
+            ConfigurationSection s = section.getConfigurationSection(key);
+            if (s == null) continue;
+            Material material = Material.matchMaterial(s.getString("material", ""));
+            int slot = s.getInt("slot");
+            if (material == null || material.isAir() || slot < 0 || slot >= VoidMenu.SIZE) {
+                getLogger().warning("menu.items." + key + " ignoré : matériau ou slot invalide.");
+                continue;
+            }
+            ItemStack icon = new ItemStack(material);
+            ItemMeta meta = icon.getItemMeta();
+            meta.displayName(itemText(s.getString("display-name", "")));
+            icon.setItemMeta(meta);
+            defs.put(key, new MenuItemDef(icon, slot, s.getString("command")));
+        }
+        return defs;
+    }
+
+    private Map<String, String> loadMessages() {
+        YamlConfiguration file = YamlConfiguration.loadConfiguration(new File(getDataFolder(), "messages.yml"));
+        Map<String, String> loaded = new HashMap<>();
+        for (String key : file.getKeys(false)) {
+            String text = file.getString(key);
+            if (text != null) loaded.put(key, text);
+        }
+        // Les textes absents d'un messages.yml plus ancien prennent la valeur du jar
+        try (Reader defaults = new InputStreamReader(Objects.requireNonNull(getResource("messages.yml")), StandardCharsets.UTF_8)) {
+            YamlConfiguration jarMessages = YamlConfiguration.loadConfiguration(defaults);
+            for (String key : jarMessages.getKeys(false)) {
+                String text = jarMessages.getString(key);
+                if (text != null) loaded.putIfAbsent(key, text);
+            }
+        } catch (IOException | RuntimeException e) {
+            getLogger().log(Level.WARNING, "messages.yml de référence illisible : " + e.getMessage());
+        }
+        return loaded;
+    }
+
+    private void loadData() {
+        YamlConfiguration yaml = YamlConfiguration.loadConfiguration(dataFile);
         islandsItems.clear();
-        dataConfig.getKeys(false).forEach(islKey -> {
-            UUID islId = UUID.fromString(islKey);
+        for (String islandKey : yaml.getKeys(false)) {
+            UUID island = UUID.fromString(islandKey);
             Map<String, TrackedItem> map = new ConcurrentHashMap<>();
-            ConfigurationSection islSec = dataConfig.getConfigurationSection(islKey);
-            islSec.getKeys(false).forEach(k -> {
-                String base = islKey + "." + k;
-                ItemStack t = dataConfig.getItemStack(base + ".template");
-                if (t != null)
-                    map.put(k, new TrackedItem(k, t, dataConfig.getInt(base + ".amount"), dataConfig.getLong(base + ".expireAt")));
-            });
-            islandsItems.put(islId, map);
-        });
+            ConfigurationSection islandSection = yaml.getConfigurationSection(islandKey);
+            if (islandSection != null) {
+                for (String key : islandSection.getKeys(false)) {
+                    String base = islandKey + "." + key;
+                    ItemStack template = yaml.getItemStack(base + ".template");
+                    if (template != null) {
+                        map.put(key, new TrackedItem(key, template, yaml.getInt(base + ".amount"), yaml.getLong(base + ".expireAt")));
+                    }
+                }
+            }
+            islandsItems.put(island, map);
+        }
     }
 
     private synchronized void saveData() {
@@ -280,12 +354,12 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         if (!dataLoaded || !dirty.getAndSet(false)) return;
         File tmp = new File(dataFile.getParentFile(), dataFile.getName() + ".tmp");
         try {
-            org.bukkit.configuration.file.YamlConfiguration yaml = new org.bukkit.configuration.file.YamlConfiguration();
-            islandsItems.forEach((id, map) -> map.forEach((k, ti) -> {
+            YamlConfiguration yaml = new YamlConfiguration();
+            islandsItems.forEach((id, map) -> map.forEach((k, item) -> {
                 String base = id + "." + k;
-                yaml.set(base + ".template", ti.template);
-                yaml.set(base + ".amount", ti.amount);
-                yaml.set(base + ".expireAt", ti.expireAt);
+                yaml.set(base + ".template", item.template());
+                yaml.set(base + ".amount", item.amount());
+                yaml.set(base + ".expireAt", item.expireAt());
             }));
             // Écriture dans un fichier temporaire puis remplacement : un arrêt en plein milieu ne tronque pas data.yml
             yaml.save(tmp);
@@ -296,263 +370,275 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         }
     }
 
-    private Island getIslandWithMargin(Location loc) {
-        Island isl = SuperiorSkyblockAPI.getIslandAt(loc);
-        if (isl != null) return isl;
-        return SuperiorSkyblockAPI.getGrid().getIslands().stream()
-            .filter(i -> {
-                Location c = i.getCenter(dimension(loc.getWorld().getEnvironment()));
-                if (c == null) return false;
-                double r = i.getIslandSize() / 2.0;
-                return loc.getX() >= c.getX() - r - margin && loc.getX() <= c.getX() + r + margin &&
-                    loc.getZ() >= c.getZ() - r - margin && loc.getZ() <= c.getZ() + r + margin;
-            }).findFirst().orElse(null);
+    /** Retire les items expirés des îles hébergées ici, et les annonces d'arrivée qui n'ont plus de raison d'être. */
+    private void purgeExpired() {
+        long now = System.currentTimeMillis() / 1000L;
+        // Les entrées d'une île hébergée ailleurs sont gardées telles quelles : c'est son hôte qui les fait expirer
+        islandsItems.forEach((id, map) -> {
+            if (isHosted(id) && map.values().removeIf(item -> item.expireAt() <= now)) dirty.set(true);
+        });
+        pendingMenus.values().removeIf(until -> until < System.currentTimeMillis());
     }
 
-    @EventHandler
-    public void onItemVoid(EntityRemoveFromWorldEvent e) {
-        if (!(e.getEntity() instanceof Item it) || it.getLocation().getY() > -70) return;
-        Island isl = getIslandWithMargin(it.getLocation());
-        if (isl == null || blacklist.contains(it.getItemStack().getType())) return;
-        UUID id = isl.getUniqueId();
-        // Chunk d'une île hébergée ailleurs, chargé ici par hasard : ses items sont ceux de son hôte
-        if (!isHosted(id)) return;
-        ItemStack dropped = it.getItemStack().clone();
-        dropped.setAmount(1);
-        Map<String, TrackedItem> map = islandsItems.computeIfAbsent(id, k -> new ConcurrentHashMap<>());
-        int quantity = it.getItemStack().getAmount();
-        // Les mondes tiquent en parallèle : la recherche puis l'ajout (ou la création) se font sous le verrou de la map de l'île
-        synchronized (map) {
-            map.values().stream()
-                .filter(t -> t.template.isSimilar(dropped))
-                .findFirst()
-                .ifPresentOrElse(t -> t.amount += quantity,
-                    () -> {
-                        String key = UUID.randomUUID().toString();
-                        map.put(key, new TrackedItem(key, dropped, quantity, Instant.now().getEpochSecond() + defaultExpireSeconds));
-                    });
-        }
-        dirty.set(true);
-    }
+    // ---------------------------------------------------------------------------------------------------------------
+    // Items tombés dans le vide
+    // ---------------------------------------------------------------------------------------------------------------
 
-    private Void openVoidMenu(Player p, int page) {
-        return openVoidMenu(p, page, true);
-    }
-
-    private Void openVoidMenu(Player p, int page, boolean refresh) {
-        UUID puid = p.getUniqueId();
-        playerPages.put(puid, page);
-        Island isl = SuperiorSkyblockAPI.getPlayer(p).getIsland();
-        if (isl == null) {
-            p.sendMessage(colorize(messages.get("no-island")));
-            return null;
-        }
-        return openIslandVoidMenu(p, isl, page, refresh);
-    }
-
-    private Void openOtherVoidMenu(Player viewer, Player target, Island targetIsland, int page) {
-        return openOtherVoidMenu(viewer, target, targetIsland, page, true);
-    }
-
-    private Void openOtherVoidMenu(Player viewer, Player target, Island targetIsland, int page, boolean refresh) {
-        UUID vuid = viewer.getUniqueId();
-        playerPages.put(vuid, page);
-        return openIslandVoidMenu(viewer, targetIsland, page, refresh);
-    }
-
-    private Void openIslandVoidMenu(Player p, Island isl, int page, boolean refresh) {
-        UUID puid = p.getUniqueId();
-        List<TrackedItem> list = islandsItems
-            .getOrDefault(isl.getUniqueId(), Collections.emptyMap())
-            .values().stream()
-            .filter(ti -> ti.template.getType() != Material.AIR)
-            .collect(Collectors.toList());
-
-        int totalPages = Math.max(1, (list.size() + itemsPerPage - 1) / itemsPerPage);
-        page = Math.min(Math.max(1, page), totalPages);
-        String title = colorize(menuTitleTemplate.replace("%page%", String.valueOf(page)).replace("%max%", String.valueOf(totalPages)));
-
-        Inventory inv = Bukkit.createInventory(null, 54, title);
-        populateMenu(inv, list, page);
-        p.openInventory(inv);
-        // Après openInventory : la fermeture du menu précédent (changement de page) passe par
-        // onInventoryClose, qui vide l'état du viewer et annule sa tâche de rafraîchissement.
-        playerMenuTitles.put(puid, title);
-        playerPages.put(puid, page);
-        viewedIslands.put(puid, isl);
-
-        if (refresh) {
-            Optional.ofNullable(refreshTasks.remove(puid)).ifPresent(BukkitTask::cancel);
-            refreshTasks.put(puid, new BukkitRunnable() {
-                public void run() {
-                    if (!p.isOnline() || p.getOpenInventory() == null || !playerMenuTitles.getOrDefault(puid, "").equals(p.getOpenInventory().getTitle())) {
-                        cancel();
-                        refreshTasks.remove(puid);
-                    } else updateMenu(p, playerPages.getOrDefault(puid, 1), isl);
-                }
-            }.runTaskTimer(this, 0, 20));
+    /**
+     * Île à laquelle appartient un point, marge comprise : celle qui contient le point, sinon celle qui contient l'un des
+     * quatre points décalés de la marge en X et en Z (les îles sont assez éloignées pour qu'il n'y en ait qu'une).
+     */
+    private Island islandAround(Location loc) {
+        Island island = SuperiorSkyblockAPI.getIslandAt(loc);
+        if (island != null || margin <= 0) return island;
+        World world = loc.getWorld();
+        for (int dx = -1; dx <= 1; dx += 2) {
+            for (int dz = -1; dz <= 1; dz += 2) {
+                island = SuperiorSkyblockAPI.getIslandAt(new Location(world, loc.getX() + dx * margin, loc.getY(), loc.getZ() + dz * margin));
+                if (island != null) return island;
+            }
         }
         return null;
     }
 
-    private void updateMenu(Player p, int page) {
-        Island isl = SuperiorSkyblockAPI.getPlayer(p).getIsland();
-        if (isl == null) return;
-        updateMenu(p, page, isl);
+    /**
+     * Un item sort du monde par le bas : seul OUT_OF_WORLD est un vrai passage dans le vide. Les fusions de piles et les
+     * déchargements de chunks retirent aussi des items, et les compteraient une seconde fois.
+     */
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onItemVoid(EntityRemoveEvent e) {
+        if (e.getCause() != EntityRemoveEvent.Cause.OUT_OF_WORLD || !(e.getEntity() instanceof Item item)) return;
+        ItemStack stack = item.getItemStack();
+        if (blacklist.contains(stack.getType())) return;
+        Island island = islandAround(item.getLocation());
+        if (island == null) return;
+        UUID id = island.getUniqueId();
+        // Chunk d'une île hébergée ailleurs, chargé ici par hasard : ses items sont ceux de son hôte
+        if (!isHosted(id)) return;
+        track(id, stack.asOne(), stackAmounts.of(item, stack.getAmount()));
     }
 
-    private void updateMenu(Player p, int page, Island isl) {
-        List<TrackedItem> list = new ArrayList<>(islandsItems.getOrDefault(isl.getUniqueId(), Collections.emptyMap()).values());
-        int totalPages = Math.max(1, (list.size() + itemsPerPage - 1) / itemsPerPage);
-        page = Math.min(Math.max(1, page), totalPages);
-        Inventory inv = p.getOpenInventory().getTopInventory();
-        inv.clear();
-        populateMenu(inv, list, page);
-        p.updateInventory();
-    }
-
-    private void populateMenu(Inventory inv, List<TrackedItem> list, int page) {
-        list = list.stream()
-            .filter(ti -> ti.template.getType() != Material.AIR)
-            .collect(Collectors.toList());
-
-        long now = Instant.now().getEpochSecond();
-        int start = (page - 1) * itemsPerPage, end = Math.min(start + itemsPerPage, list.size());
-
-        for (int i = start; i < end; i++) {
-            TrackedItem ti = list.get(i);
-
-            try {
-                ItemStack stack = ti.template.clone();
-                stack.setAmount(Math.min(ti.amount, stack.getMaxStackSize()));
-
-                ItemMeta meta = stack.getItemMeta();
-                if (meta == null) {
-                    meta = Bukkit.getItemFactory().getItemMeta(stack.getType());
-                    if (meta == null) {
-                        getLogger().warning("Aucun ItemMeta pour " + stack.getType() + " (template=" + ti.template + ")");
-                        continue;
-                    }
+    /** Ajoute {@code quantity} exemplaires de {@code template} aux items tombés dans le vide de l'île. */
+    private void track(UUID island, ItemStack template, int quantity) {
+        Map<String, TrackedItem> map = islandsItems.computeIfAbsent(island, k -> new ConcurrentHashMap<>());
+        long now = System.currentTimeMillis() / 1000L;
+        // Les mondes tiquent en parallèle : la recherche puis le cumul (ou la création) se font sous le verrou de la map de l'île
+        synchronized (map) {
+            for (Map.Entry<String, TrackedItem> entry : map.entrySet()) {
+                TrackedItem existing = entry.getValue();
+                if (existing.expireAt() <= now || !existing.template().isSimilar(template)) continue;
+                // Le cumul remplace l'entrée seulement si elle y est encore : un item racheté entre-temps n'est jamais remis
+                if (map.computeIfPresent(entry.getKey(), (key, current) -> current.plus(quantity)) != null) {
+                    dirty.set(true);
+                    return;
                 }
-
-                ItemMeta finalMeta = meta;
-                List<String> lore = loreTemplate.stream()
-                    .flatMap(line -> {
-                        if ("%lore%".equals(line)) {
-                            return Optional.ofNullable(finalMeta.getLore())
-                                .map(List::stream)
-                                .orElseGet(Stream::empty)
-                                .map(this::colorize);
-                        }
-                        String text = line
-                            .replace("%quantity%", String.valueOf(ti.amount))
-                            .replace("%countdown%", formatCountdown(ti.expireAt - now))
-                            .replace("%price%", String.valueOf((int) Math.ceil(getPrice(stack.getType()))));
-                        return Stream.of(colorize(text));
-                    })
-                    .collect(Collectors.toList());
-
-                meta.setLore(lore);
-                meta.getPersistentDataContainer().set(itemIdKey, PersistentDataType.STRING, ti.id);
-                stack.setItemMeta(meta);
-                inv.addItem(stack);
-
-            } catch (Exception ex) {
-                getLogger().log(Level.SEVERE,
-                    "Erreur lors du traitement de l'item à l'index " + i +
-                        " (template=" + ti.template + ", amount=" + ti.amount + ")", ex);
             }
+            String key = UUID.randomUUID().toString();
+            map.put(key, new TrackedItem(key, template, quantity, now + defaultExpireSeconds));
         }
-        int totalPages = Math.max(1, (list.size() + itemsPerPage - 1) / itemsPerPage);
-        if (page > 1)
-            Optional.ofNullable(menuItems.get("prev-page")).ifPresent(d -> inv.setItem(d.slot, createNavItem("prev-page")));
-        if (page < totalPages)
-            Optional.ofNullable(menuItems.get("next-page")).ifPresent(d -> inv.setItem(d.slot, createNavItem("next-page")));
-        Optional.ofNullable(menuItems.get("close")).ifPresent(d -> inv.setItem(d.slot, createNavItem("close")));
+        dirty.set(true);
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Menu
+    // ---------------------------------------------------------------------------------------------------------------
+
+    private void openOwnMenu(Player player) {
+        Island island = SuperiorSkyblockAPI.getPlayer(player).getIsland();
+        if (island == null) {
+            send(player, "no-island");
+            return;
+        }
+        openMenu(player, island.getUniqueId(), 1);
+    }
+
+    /** /shvoid &lt;joueur&gt; : le menu de l'île d'un autre joueur, réservé aux admins. */
+    private void openMenuOf(Player viewer, String targetName) {
+        if (!viewer.hasPermission(ADMIN_PERMISSION)) {
+            send(viewer, "no-permission");
+            return;
+        }
+        Player target = Bukkit.getPlayerExact(targetName);
+        if (target == null) {
+            send(viewer, "player-not-found");
+            return;
+        }
+        Island island = SuperiorSkyblockAPI.getPlayer(target).getIsland();
+        if (island == null) {
+            send(viewer, "target-no-island");
+            return;
+        }
+        if (!isHosted(island.getUniqueId())) {
+            send(viewer, "network-other-server", "{serveur}", network.hostOf(island.getUniqueId()));
+            return;
+        }
+        openMenu(viewer, island.getUniqueId(), 1);
+    }
+
+    /** Ouvre le menu de l'île à la page demandée (ramenée entre la première et la dernière). */
+    private void openMenu(Player viewer, UUID island, int requestedPage) {
+        List<TrackedItem> entries = entriesOf(island);
+        int pages = pageCount(entries.size());
+        int page = Math.min(Math.max(1, requestedPage), pages);
+        VoidMenu menu = new VoidMenu(island, page, pages, LEGACY.deserialize(
+            menuTitle.replace("%page%", String.valueOf(page)).replace("%max%", String.valueOf(pages))));
+        placeButtons(menu);
+        fill(menu, entries);
+        viewer.openInventory(menu.getInventory());
+    }
+
+    private int pageCount(int entries) {
+        return Math.max(1, (entries + itemsPerPage - 1) / itemsPerPage);
+    }
+
+    /** Items de l'île, les plus proches de l'expiration d'abord. */
+    private List<TrackedItem> entriesOf(UUID island) {
+        Map<String, TrackedItem> map = islandsItems.get(island);
+        if (map == null) return List.of();
+        return map.values().stream()
+            .filter(item -> !item.template().getType().isAir())
+            .sorted(Comparator.comparingLong(TrackedItem::expireAt).thenComparing(TrackedItem::id))
+            .toList();
+    }
+
+    /** Boutons de navigation et de retour : fixes pour la vie du menu, puisque sa page et son nombre de pages le sont. */
+    private void placeButtons(VoidMenu menu) {
+        Inventory inv = menu.getInventory();
+        MenuItemDef prev = menuItems.get("prev-page");
+        MenuItemDef next = menuItems.get("next-page");
+        MenuItemDef close = menuItems.get("close");
+        if (prev != null && menu.page() > 1) inv.setItem(prev.slot(), prev.icon());
+        if (next != null && menu.page() < menu.pages()) inv.setItem(next.slot(), next.icon());
+        if (close != null) inv.setItem(close.slot(), close.icon());
+    }
+
+    /** Écrit les items de la page dans leurs emplacements, et vide ceux qui ne servent plus. */
+    private void fill(VoidMenu menu, List<TrackedItem> entries) {
+        Inventory inv = menu.getInventory();
+        long now = System.currentTimeMillis() / 1000L;
+        int first = (menu.page() - 1) * itemsPerPage;
+        for (int slot = 0; slot < itemsPerPage; slot++) {
+            int index = first + slot;
+            inv.setItem(slot, index < entries.size() ? icon(entries.get(index), now) : null);
+        }
+    }
+
+    private ItemStack icon(TrackedItem entry, long now) {
+        try {
+            ItemStack stack = entry.template().clone();
+            stack.setAmount(Math.min(entry.amount(), stack.getMaxStackSize()));
+            ItemMeta meta = stack.getItemMeta();
+            List<Component> lore = new ArrayList<>();
+            for (String line : loreTemplate) {
+                if (ORIGINAL_LORE.equals(line)) {
+                    List<Component> original = meta.lore();
+                    if (original != null) lore.addAll(original);
+                } else {
+                    lore.add(itemText(line
+                        .replace("%quantity%", String.valueOf(entry.amount()))
+                        .replace("%countdown%", countdown(entry.expireAt() - now))
+                        .replace("%price%", String.valueOf((int) Math.ceil(getPrice(stack.getType()))))));
+                }
+            }
+            meta.lore(lore);
+            meta.getPersistentDataContainer().set(itemIdKey, PersistentDataType.STRING, entry.id());
+            stack.setItemMeta(meta);
+            return stack;
+        } catch (Exception ex) {
+            getLogger().log(Level.SEVERE, "Erreur lors du traitement de l'item " + entry.id()
+                + " (template=" + entry.template() + ", amount=" + entry.amount() + ")", ex);
+            return null;
+        }
+    }
+
+    /** Menu ouvert par ce joueur, ou null s'il regarde autre chose. */
+    private VoidMenu menuOf(Player viewer) {
+        // false : pas de copie de l'état du bloc quand le joueur a un coffre ouvert
+        return viewer.getOpenInventory().getTopInventory().getHolder(false) instanceof VoidMenu menu ? menu : null;
+    }
+
+    /** Une seule tâche pour tous les menus ouverts : compte à rebours et quantités à jour, sans état par joueur. */
+    private void refreshMenus() {
+        for (Player viewer : getServer().getOnlinePlayers()) {
+            VoidMenu menu = menuOf(viewer);
+            if (menu == null) continue;
+            List<TrackedItem> entries = entriesOf(menu.island());
+            // Le nombre de pages a changé : le titre est périmé, et la page n'existe peut-être plus
+            if (pageCount(entries.size()) != menu.pages()) openMenu(viewer, menu.island(), menu.page());
+            else fill(menu, entries);
+        }
     }
 
     @EventHandler
     public void onInventoryClick(InventoryClickEvent e) {
-        if (!(e.getWhoClicked() instanceof Player p) || !p.getOpenInventory().getTitle().startsWith(menuTitlePrefix))
-            return;
+        if (!(e.getView().getTopInventory().getHolder(false) instanceof VoidMenu menu)) return;
         e.setCancelled(true);
         // Un clic dans l'inventaire du joueur ne doit rien acheter
-        if (e.getClickedInventory() == null || e.getClickedInventory() != e.getView().getTopInventory()) return;
+        if (!(e.getWhoClicked() instanceof Player p) || e.getClickedInventory() != e.getView().getTopInventory()) return;
         ItemStack clicked = e.getCurrentItem();
-        if (clicked == null || clicked.getType() == Material.AIR) return;
+        if (clicked == null || clicked.isEmpty()) return;
 
-        MenuItemDef closeDef = menuItems.get("close");
-        if (closeDef != null && e.getSlot() == closeDef.slot) {
-            if (closeDef.command != null && !closeDef.command.isEmpty()) {
-                p.performCommand(closeDef.command);
-            } else {
-                p.closeInventory();
-            }
+        int slot = e.getSlot();
+        MenuItemDef close = menuItems.get("close");
+        if (close != null && slot == close.slot()) {
+            if (close.command() != null && !close.command().isEmpty()) p.performCommand(close.command());
+            else p.closeInventory();
             return;
         }
-
-        Island isl = viewedIslands.getOrDefault(p.getUniqueId(), SuperiorSkyblockAPI.getPlayer(p).getIsland());
-        if (isl == null) return;
-
-        int page = playerPages.getOrDefault(p.getUniqueId(), 1);
-        MenuItemDef prevDef = menuItems.get("prev-page");
-        MenuItemDef nextDef = menuItems.get("next-page");
-        if (prevDef != null && e.getSlot() == prevDef.slot) {
-            openIslandVoidMenu(p, isl, page - 1, true);
+        MenuItemDef prev = menuItems.get("prev-page");
+        MenuItemDef next = menuItems.get("next-page");
+        if (prev != null && slot == prev.slot()) {
+            openMenu(p, menu.island(), menu.page() - 1);
             return;
         }
-        if (nextDef != null && e.getSlot() == nextDef.slot) {
-            openIslandVoidMenu(p, isl, page + 1, true);
+        if (next != null && slot == next.slot()) {
+            openMenu(p, menu.island(), menu.page() + 1);
             return;
         }
 
-        // Identification exacte par l'id posé en PDC : deux items du même type ne se confondent plus
-        ItemMeta clickedMeta = clicked.getItemMeta();
-        String itemId = clickedMeta == null ? null : clickedMeta.getPersistentDataContainer().get(itemIdKey, PersistentDataType.STRING);
-        if (itemId == null) return;
-        Map<String, TrackedItem> items = islandsItems.get(isl.getUniqueId());
-        TrackedItem ti = items == null ? null : items.get(itemId);
-        if (ti == null) return;
-        double price = getPrice(ti.template.getType());
-        if (!hasSufficientFunds(p, price)) {
-            p.sendMessage(colorize(messages.get("purchase-no-funds").replace("%currency%", "money".equals(currencyType) ? "argent" : currencyItem.name())));
-            return;
-        }
-        // Toute la quantité doit tenir dans l'inventaire : addItem() jetterait le surplus déjà payé
-        int maxStack = Math.max(1, ti.template.getMaxStackSize());
-        int slotsNeeded = (ti.amount + maxStack - 1) / maxStack;
-        if (countFreeSlots(p) < slotsNeeded) {
-            p.sendMessage(colorize(messages.get("purchase-no-space")));
-            return;
-        }
-        // Retrait de la map avant de payer et de donner : un second clic ne trouve plus l'item
-        if (!items.remove(itemId, ti)) return;
-        dirty.set(true);
-        withdrawFunds(p, price);
-        int remaining = ti.amount;
-        while (remaining > 0) {
-            ItemStack toGive = ti.template.clone();
-            int amount = Math.min(remaining, maxStack);
-            toGive.setAmount(amount);
-            p.getInventory().addItem(toGive);
-            remaining -= amount;
-        }
-        ActionLog.write(this, purchaseLogFile, purchaseLogFormat
-            .replace("%player%", p.getName())
-            .replace("%amount%", String.valueOf(ti.amount))
-            .replace("%item%", itemName(ti.template))
-            .replace("%price%", String.valueOf((int) Math.ceil(price))));
-        if (buySound != null) p.playSound(p.getLocation(), buySound, 1f, 1f);
-        p.sendMessage(colorize(messages.get("purchase-success")));
-        p.closeInventory();
+        // Identification exacte par l'id posé en PDC : deux items du même type ne se confondent pas
+        String itemId = clicked.getItemMeta().getPersistentDataContainer().get(itemIdKey, PersistentDataType.STRING);
+        if (itemId != null) buy(p, menu.island(), itemId);
     }
 
-    private int countFreeSlots(Player p) {
-        int free = 0;
-        for (ItemStack it : p.getInventory().getStorageContents()) {
-            if (it == null || it.getType() == Material.AIR) free++;
+    @EventHandler
+    public void onInventoryDrag(InventoryDragEvent e) {
+        // Un item glissé dans le menu serait perdu à la fermeture
+        if (e.getView().getTopInventory().getHolder(false) instanceof VoidMenu) e.setCancelled(true);
+    }
+
+    // ---------------------------------------------------------------------------------------------------------------
+    // Rachat
+    // ---------------------------------------------------------------------------------------------------------------
+
+    private void buy(Player p, UUID island, String itemId) {
+        Map<String, TrackedItem> items = islandsItems.get(island);
+        TrackedItem item = items == null ? null : items.get(itemId);
+        if (item == null) return;
+        double price = getPrice(item.template().getType());
+        if (!hasSufficientFunds(p, price)) {
+            send(p, "purchase-no-funds", "%currency%", currencyName());
+            return;
         }
-        return free;
+        // Toute la quantité doit tenir chez le joueur : ce qui n'y tient pas serait déjà payé
+        if (!giver.fits(p, item.template(), item.amount())) {
+            send(p, "purchase-no-space");
+            return;
+        }
+        // Retrait de la map avant de payer et de donner : un second clic ne trouve plus l'item, et un cumul arrivé
+        // depuis la lecture (l'entrée a changé) annule ce rachat plutôt que de donner autre chose que ce qui a été vu
+        if (!items.remove(itemId, item)) return;
+        dirty.set(true);
+        withdrawFunds(p, price);
+        giver.give(p, item.template(), item.amount());
+        ActionLog.write(this, purchaseLogFile, purchaseLogFormat
+            .replace("%player%", p.getName())
+            .replace("%amount%", String.valueOf(item.amount()))
+            .replace("%item%", itemName(item.template()))
+            .replace("%price%", String.valueOf((int) Math.ceil(price))));
+        if (buySound != null) p.playSound(p.getLocation(), buySound, 1f, 1f);
+        send(p, "purchase-success");
+        p.closeInventory();
     }
 
     private boolean hasSufficientFunds(Player p, double price) {
@@ -589,99 +675,62 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         }
     }
 
-    @EventHandler
-    public void onInventoryDrag(InventoryDragEvent e) {
-        // Un item glissé dans le menu serait perdu à la fermeture
-        if (e.getWhoClicked() instanceof Player p && p.getOpenInventory().getTitle().startsWith(menuTitlePrefix)) {
-            e.setCancelled(true);
-        }
-    }
-
-    @EventHandler
-    public void onInventoryClose(InventoryCloseEvent e) {
-        UUID puid = e.getPlayer().getUniqueId();
-        Optional.ofNullable(refreshTasks.remove(puid)).ifPresent(BukkitTask::cancel);
-        playerPages.remove(puid);
-        playerMenuTitles.remove(puid);
-        viewedIslands.remove(puid);
-    }
-
-    private String formatCountdown(long secs) {
-        return secs <= 0 ? colorize(messages.getOrDefault("expired", "&cExpiré")) : colorize(countdownFormat
-            .replace("%h%", String.valueOf(secs / 3600))
-            .replace("%m%", String.valueOf((secs % 3600) / 60))
-            .replace("%s%", String.valueOf(secs % 60)));
-    }
-
     private double getPrice(Material mat) {
         return customPrices.getOrDefault(mat.name(), defaultPrice);
     }
 
-    private ItemStack createNavItem(String key) {
-        MenuItemDef def = menuItems.get(key);
-        ItemStack it = new ItemStack(def.material);
-        ItemMeta m = it.getItemMeta();
-        m.setDisplayName(colorize(def.displayName));
-        it.setItemMeta(m);
-        return it;
+    // ---------------------------------------------------------------------------------------------------------------
+    // Textes
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /** Texte du compte à rebours d'un item, en codes '&amp;' (le temps restant, ou « expiré »). */
+    private String countdown(long secs) {
+        if (secs <= 0) return message("expired");
+        return countdownFormat
+            .replace("%h%", String.valueOf(secs / 3600))
+            .replace("%m%", String.valueOf((secs % 3600) / 60))
+            .replace("%s%", String.valueOf(secs % 60));
     }
 
-    private String colorize(String msg) {
-        return ChatColor.translateAlternateColorCodes('&', msg);
+    private String message(String key) {
+        return messages.getOrDefault(key, key);
+    }
+
+    /** Envoie le message {@code key} ; {@code replacements} alterne texte cherché et texte mis à sa place. */
+    private void send(CommandSender to, String key, String... replacements) {
+        String text = message(key);
+        for (int i = 0; i + 1 < replacements.length; i += 2) text = text.replace(replacements[i], replacements[i + 1]);
+        to.sendMessage(LEGACY.deserialize(text));
+    }
+
+    /** Texte d'un item (nom, lore) : pas d'italique, sauf là où le texte le demande avec '&amp;o'. */
+    private static Component itemText(String legacy) {
+        return LEGACY.deserialize(legacy).decorationIfAbsent(TextDecoration.ITALIC, TextDecoration.State.FALSE);
+    }
+
+    /** Monnaie du menu, pour le placeholder %currency% de purchase-no-funds. */
+    private String currencyName() {
+        return "money".equals(currencyType) ? message("currency-money") : currencyItem == null ? "" : prettyName(currencyItem);
     }
 
     /** Nom personnalisé de l'objet, sinon son type écrit lisiblement (Diamond Sword). */
-    private String itemName(ItemStack stack) {
+    private static String itemName(ItemStack stack) {
         ItemMeta meta = stack.getItemMeta();
-        if (meta != null && meta.hasDisplayName()) return meta.getDisplayName();
+        if (meta != null && meta.hasDisplayName()) return PlainTextComponentSerializer.plainText().serialize(Objects.requireNonNull(meta.displayName()));
+        return prettyName(stack.getType());
+    }
+
+    private static String prettyName(Material material) {
         StringBuilder name = new StringBuilder();
-        for (String word : stack.getType().getKey().getKey().split("_")) {
-            if (name.length() > 0) name.append(' ');
+        for (String word : material.getKey().getKey().split("_")) {
+            if (!name.isEmpty()) name.append(' ');
             name.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));
         }
         return name.toString();
     }
 
-    private static class MenuItemDef {
-        Material material;
-        String displayName;
-        int slot;
-        String command;
-
-        MenuItemDef(Material m, String n, int s, String c) {
-            material = m;
-            displayName = n;
-            slot = s;
-            command = c;
-        }
-    }
-
-    private static class TrackedItem {
-        final String id; // clé dans la map de l'île, posée en PDC sur l'icône du menu
-        ItemStack template;
-        volatile int amount; // modifié sous verrou par les threads des mondes, lu par la sauvegarde asynchrone
-        long expireAt;
-
-        TrackedItem(String id, ItemStack t, int a, long e) {
-            this.id = id;
-            template = t;
-            amount = a;
-            expireAt = e;
-        }
-    }
-
-    private class ExpireTask extends BukkitRunnable {
-        public void run() {
-            long now = Instant.now().getEpochSecond();
-            // Les entrées d'une île hébergée ailleurs sont gardées telles quelles : c'est son hôte qui les fait expirer
-            islandsItems.forEach((id, m) -> {
-                if (isHosted(id) && m.values().removeIf(t -> t.expireAt <= now)) dirty.set(true);
-            });
-        }
-    }
-
     /** Son lu en config : ancien nom (ENTITY_PLAYER_LEVELUP) ou clé (minecraft:entity.player.levelup). */
-    static Sound sound(String raw) {
+    private static Sound sound(String raw) {
         if (raw == null || raw.isBlank()) return null;
         String s = raw.trim();
         if (s.indexOf(':') >= 0 || s.indexOf('.') >= 0) {
@@ -695,11 +744,27 @@ public class SHVoidItems extends JavaPlugin implements Listener, CommandExecutor
         }
     }
 
-    // SSB2 2026 : getCenter prend une Dimension et non plus un World.Environment
-    private static Dimension dimension(World.Environment env) {
-        for (Dimension d : Dimension.values()) {
-            if (d.getEnvironment() == env) return d;
+    // ---------------------------------------------------------------------------------------------------------------
+    // Données
+    // ---------------------------------------------------------------------------------------------------------------
+
+    /** Bouton du menu : son icône toute faite, son emplacement et, pour le retour, la commande lancée au clic. */
+    private record MenuItemDef(ItemStack icon, int slot, String command) {
+    }
+
+    /**
+     * Item tombé dans le vide, regroupé par île. Immuable : un cumul remplace l'entrée par une copie de plus grande quantité,
+     * ce qui laisse la sauvegarde asynchrone et les mondes tiqués en parallèle lire une entrée toujours cohérente.
+     *
+     * @param id       clé dans la map de l'île, posée en PDC sur l'icône du menu
+     * @param template un exemplaire de l'item
+     * @param amount   quantité totale
+     * @param expireAt fin de validité, en secondes depuis l'epoch
+     */
+    private record TrackedItem(String id, ItemStack template, int amount, long expireAt) {
+
+        TrackedItem plus(int quantity) {
+            return new TrackedItem(id, template, (int) Math.min(Integer.MAX_VALUE, (long) amount + quantity), expireAt);
         }
-        return Dimension.getByName("NORMAL");
     }
 }
