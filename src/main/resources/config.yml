@@ -8,12 +8,18 @@
 # Les messages sont dans messages.yml.
 #
 # Commandes :
-#   /shvoid (alias /void)    Ouvre le menu des items tombés dans le vide de son île.
-#   /shvoid <joueur>         Ouvre le menu des items tombés dans le vide de l'île d'un joueur (complétion des joueurs en ligne).
+#   /void (alias /shvoid)           Ouvre le menu des items tombés dans le vide de son île.
+#   /shvoiditems view <joueur>      Ouvre le menu des items tombés dans le vide de l'île d'un joueur en ligne (complétion
+#                                   des joueurs en ligne). /void <joueur> marche toujours.
+#   /shvoiditems reload             Relit config.yml et messages.yml (un fichier illisible ne change rien, data.yml n'est
+#                                   jamais relu). defaults.expire-seconds ne vaut que pour les items retenus ensuite ;
+#                                   la section reseau demande un redémarrage.
 #
 # Permissions :
-#   shvoiditems.use     Ouvrir son propre menu (accordée à tous par défaut).
-#   shvoiditems.admin   Ouvrir le menu d'un autre joueur (op par défaut).
+#   shvoiditems.use            Ouvrir son propre menu (accordée à tous par défaut).
+#   shvoiditems.admin          Toutes les sous-commandes de /shvoiditems (op par défaut).
+#   shvoiditems.admin.view     /shvoiditems view : ouvrir le menu d'un autre joueur (op par défaut).
+#   shvoiditems.admin.reload   /shvoiditems reload (op par défaut).
 
 menu:
   title: "&8Marchand des abîmes &7(%page%/%max%)"
@@ -141,7 +147,7 @@ logs:
 
 # Mode réseau. Actif seulement si SHSkyBridge et SHNetwork sont installés (plusieurs serveurs se partagent les îles,
 # chacune étant hébergée par un seul) et 'actif' vaut true. Un serveur ne garde les items tombés dans le vide que des
-# îles qu'il héberge et n'efface rien des autres ; /shvoid envoie le joueur sur le serveur de son île, où le menu s'ouvre
+# îles qu'il héberge et n'efface rien des autres ; /void envoie le joueur sur le serveur de son île, où le menu s'ouvre
 # à l'arrivée. Les items d'une île suivent l'île quand SHSkyBridge la déplace. Sans eux, rien de ceci n'est utilisé.
 # Demande un redémarrage.
 reseau:

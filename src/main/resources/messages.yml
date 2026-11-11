@@ -1,4 +1,4 @@
-# Messages envoyés aux joueurs par /shvoid et par le Marchand des abîmes.
+# Messages envoyés aux joueurs par /void, /shvoiditems et par le Marchand des abîmes.
 
 # Menu du Marchand des abîmes
 no-island: "&7[NPC] &8Marchand des Abîmes &8&l» &fVous n'avez pas encore d'île..."
@@ -10,12 +10,20 @@ expired: "&cExpiré"
 # Valeur de %currency% dans purchase-no-funds quand la monnaie est l'argent (currency.type: money)
 currency-money: "argent"
 
-# Commande /shvoid
+# Commandes /void et /shvoiditems
 player-only: "&7&l« &c&lSH &8&l» &7Cette commande est réservée aux &cjoueurs&7."
 no-permission: "&8&l« &f&lSH &8&l» &fCommande inconnue, essayer autre chose."
 player-not-found: "&7&l« &c&lSH &8&l» &7Joueur &cintrouvable&7."
 target-no-island: "&7&l« &c&lSH &8&l» &7Ce joueur n'a &cpas d'île&7."
 internal-error: "&7&l« &c&lSH &8&l» &7Une &cerreur &7est survenue, consultez la console."
+
+# /shvoiditems sans argument, ou avec une sous-commande inconnue. {subcommands} : celles que l'expéditeur peut utiliser
+usage: "&7&l« &e&lSH &8&l» &7Utilisation : &e/shvoiditems &7<&e{subcommands}&7>"
+
+# /shvoiditems reload. {file} : fichier illisible, {error} : cause (l'ancienne configuration reste en place)
+reload-done: "&7&l« &a&lSH &8&l» &7Configuration et messages rechargés."
+reload-error: "&7&l« &c&lSH &8&l» &7Rechargement annulé, &c{file} &7est illisible : &c{error}"
+reload-restart: "&7&l« &6&lSH &8&l» &7La section &6reseau &7ne se lit qu'au démarrage : &6redémarrage nécessaire &7pour la changer."
 
 # Mode réseau : île hébergée par un autre serveur
 network-forward: "&7&l« &e&lSH &8&l» &7Ton île est sur le serveur &e{serveur}&7 : le menu s'ouvre &eà ton arrivée&7."

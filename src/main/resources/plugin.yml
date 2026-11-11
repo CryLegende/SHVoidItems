@@ -9,17 +9,29 @@ depend: [SuperiorSkyblock2, Vault]
 softdepend: [SHLogs, WildStacker, SHInventoryPages, SHNetwork, SHSkyBridge]
 
 commands:
-  shvoid:
+  void:
     description: Ouvre le menu des Void Items pour vous ou pour un autre joueur (admin)
     usage: /<command> [player]
-    aliases: [void]
+    aliases: [shvoid]
     permission: shvoiditems.use
     permission-message: Vous n'avez pas la permission d'utiliser cette commande.
+  shvoiditems:
+    description: Administration de SHVoidItems.
+    usage: /<command> <view|reload>
 
 permissions:
   shvoiditems.use:
     description: Permet d’ouvrir son propre menu void.
     default: true
   shvoiditems.admin:
-    description: Permet d’ouvrir le menu void d’un autre joueur.
+    description: Toutes les sous-commandes de /shvoiditems (view, reload).
+    default: op
+    children:
+      shvoiditems.admin.view: true
+      shvoiditems.admin.reload: true
+  shvoiditems.admin.view:
+    description: Permet d’ouvrir le menu void d’un autre joueur (/shvoiditems view, ancien /void <joueur>).
+    default: op
+  shvoiditems.admin.reload:
+    description: Recharger config.yml et messages.yml (/shvoiditems reload).
     default: op

@@ -26,6 +26,7 @@ import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabExecutor;
 import org.bukkit.configuration.ConfigurationSection;
+import org.bukkit.configuration.InvalidConfigurationException;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.entity.Item;
@@ -43,6 +44,7 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.scheduler.BukkitTask;
 
 import java.io.File;
 import java.io.IOException;
@@ -68,7 +70,11 @@ import java.util.stream.Collectors;
 
 public class SHVoidItems extends JavaPlugin implements Listener, TabExecutor {
 
-    private static final String ADMIN_PERMISSION = "shvoiditems.admin";
+    // /shvoiditems : sous-commande -> permission (shvoiditems.admin est le parent de toutes)
+    private static final Map<String, String> ADMIN_SUBCOMMANDS = Map.of(
+        "view", "shvoiditems.admin.view",
+        "reload", "shvoiditems.admin.reload");
+    private static final List<String> ADMIN_ORDER = List.of("view", "reload");
     // Ligne de 'lore' remplacée par le lore d'origine de l'item
     private static final String ORIGINAL_LORE = "%lore%";
     private static final LegacyComponentSerializer LEGACY = LegacyComponentSerializer.legacyAmpersand();
@@ -81,22 +87,30 @@ public class SHVoidItems extends JavaPlugin implements Listener, TabExecutor {
     private final AtomicBoolean dirty = new AtomicBoolean();
     private volatile boolean dataLoaded;
 
-    private String menuTitle;
-    private int itemsPerPage;
-    private Map<String, MenuItemDef> menuItems;
-    private String currencyType;
-    private Material currencyItem;
-    private long defaultExpireSeconds;
-    private double defaultPrice;
-    private Map<String, Double> customPrices;
-    private Sound buySound;
-    private Set<Material> blacklist;
-    private Map<String, String> messages;
-    private String countdownFormat;
-    private List<String> loreTemplate;
-    private double margin;
-    private String purchaseLogFile;
-    private String purchaseLogFormat;
+    // Réglages lus dans config.yml et messages.yml : remplacés tous ensemble par /shvoiditems reload, et lus par les
+    // threads des mondes (chute dans le vide) comme par la sauvegarde asynchrone
+    private volatile String menuTitle;
+    private volatile int itemsPerPage;
+    private volatile Map<String, MenuItemDef> menuItems;
+    private volatile String currencyType;
+    private volatile Material currencyItem;
+    private volatile long defaultExpireSeconds;
+    private volatile double defaultPrice;
+    private volatile Map<String, Double> customPrices;
+    private volatile Sound buySound;
+    private volatile Set<Material> blacklist;
+    private volatile Map<String, String> messages;
+    private volatile String countdownFormat;
+    private volatile List<String> loreTemplate;
+    private volatile double margin;
+    private volatile String purchaseLogFile;
+    private volatile String purchaseLogFormat;
+    // Valeur de reseau.actif au démarrage : le mode réseau ne se branche ni ne se débranche à chaud
+    private boolean networkConfigured;
+    // Tâches planifiées, reprogrammées par le rechargement avec les périodes de config.yml
+    private BukkitTask saveTask;
+    private BukkitTask purgeTask;
+    private BukkitTask refreshTask;
 
     // Quantité réelle des piles au sol : celle de l'entité, ou celle de WildStacker quand il est là
     private StackAmounts stackAmounts = (item, visible) -> visible;
@@ -107,17 +121,20 @@ public class SHVoidItems extends JavaPlugin implements Listener, TabExecutor {
     private NetworkLink network;
     // Joueurs envoyés ici par un autre serveur pour ouvrir le menu de leur île : joueur -> fin de validité (ms)
     private final Map<UUID, Long> pendingMenus = new ConcurrentHashMap<>();
-    private long arrivalKeepMs = 60_000L;
+    private volatile long arrivalKeepMs = 60_000L;
 
     @Override
     public void onEnable() {
         itemIdKey = new NamespacedKey(this, "void_item_id");
         saveDefaultConfig();
         if (!new File(getDataFolder(), "messages.yml").exists()) saveResource("messages.yml", false);
-        loadConfigValues();
+        FileConfiguration cfg = getConfig();
+        networkConfigured = cfg.getBoolean("reseau.actif", true);
+        applySettings(cfg, loadMessages());
         if (!setupEconomy()) return;
         getServer().getPluginManager().registerEvents(this, this);
-        Objects.requireNonNull(getCommand("shvoid")).setExecutor(this);
+        Objects.requireNonNull(getCommand("void")).setExecutor(this);
+        Objects.requireNonNull(getCommand("shvoiditems")).setExecutor(this);
         dataFile = new File(getDataFolder(), "data.yml");
         if (!dataFile.exists()) saveResource("data.yml", false);
         loadData();
@@ -125,15 +142,21 @@ public class SHVoidItems extends JavaPlugin implements Listener, TabExecutor {
         enableStackAmounts();
         enableGiver();
         enableNetwork();
-
-        FileConfiguration cfg = getConfig();
-        long saveTicks = Math.max(1, cfg.getLong("data.save-seconds")) * 20L;
-        long expireTicks = Math.max(1, cfg.getLong("data.expire-check-seconds")) * 20L;
-        long refreshTicks = Math.max(1, cfg.getLong("menu.refresh-ticks"));
-        getServer().getScheduler().runTaskTimerAsynchronously(this, this::saveData, saveTicks, saveTicks);
-        getServer().getScheduler().runTaskTimerAsynchronously(this, this::purgeExpired, 0, expireTicks);
-        getServer().getScheduler().runTaskTimer(this, this::refreshMenus, refreshTicks, refreshTicks);
+        scheduleTasks(cfg);
         getLogger().info("SHVoidItems activé.");
+    }
+
+    /** (Re)programme la sauvegarde, la purge et le rafraîchissement des menus avec les périodes de config.yml. */
+    private void scheduleTasks(FileConfiguration cfg) {
+        for (BukkitTask task : new BukkitTask[]{saveTask, purgeTask, refreshTask}) {
+            if (task != null) task.cancel();
+        }
+        long saveTicks = Math.max(1, cfg.getLong("data.save-seconds", 60)) * 20L;
+        long expireTicks = Math.max(1, cfg.getLong("data.expire-check-seconds", 60)) * 20L;
+        long refreshTicks = Math.max(1, cfg.getLong("menu.refresh-ticks", 20));
+        saveTask = getServer().getScheduler().runTaskTimerAsynchronously(this, this::saveData, saveTicks, saveTicks);
+        purgeTask = getServer().getScheduler().runTaskTimerAsynchronously(this, this::purgeExpired, 0, expireTicks);
+        refreshTask = getServer().getScheduler().runTaskTimer(this, this::refreshMenus, refreshTicks, refreshTicks);
     }
 
     @Override
@@ -218,6 +241,10 @@ public class SHVoidItems extends JavaPlugin implements Listener, TabExecutor {
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (command.getName().equalsIgnoreCase("shvoiditems")) {
+            adminCommand(sender, args);
+            return true;
+        }
         if (!(sender instanceof Player player)) {
             send(sender, "player-only");
             return true;
@@ -228,6 +255,7 @@ public class SHVoidItems extends JavaPlugin implements Listener, TabExecutor {
             if (args.length == 0) {
                 if (!forwardToHost(player)) openOwnMenu(player);
             } else {
+                // Ancienne forme /void <joueur> : même effet que /shvoiditems view <joueur>
                 openMenuOf(player, args[0]);
             }
         } catch (Exception e) {
@@ -237,16 +265,120 @@ public class SHVoidItems extends JavaPlugin implements Listener, TabExecutor {
         return true;
     }
 
+    /** /shvoiditems view|reload : chaque sous-commande a sa permission, la console peut recharger. */
+    private void adminCommand(CommandSender sender, String[] args) {
+        List<String> allowed = allowedSubcommands(sender);
+        if (allowed.isEmpty()) {
+            send(sender, "no-permission");
+            return;
+        }
+        String sub = args.length == 0 ? "" : args[0].toLowerCase(Locale.ROOT);
+        if (!allowed.contains(sub)) {
+            send(sender, "usage", "{subcommands}", String.join("|", allowed));
+            return;
+        }
+        switch (sub) {
+            case "view" -> {
+                if (!(sender instanceof Player viewer)) {
+                    send(sender, "player-only");
+                } else if (args.length != 2) {
+                    send(sender, "usage", "{subcommands}", String.join("|", allowed));
+                } else {
+                    try {
+                        openMenuOf(viewer, args[1]);
+                    } catch (Exception e) {
+                        send(viewer, "internal-error");
+                        getLogger().log(Level.SEVERE, "Erreur lors de /shvoiditems view " + args[1], e);
+                    }
+                }
+            }
+            case "reload" -> reload(sender);
+            default -> send(sender, "usage", "{subcommands}", String.join("|", allowed));
+        }
+    }
+
+    /** Sous-commandes de /shvoiditems que l'expéditeur a le droit d'utiliser. */
+    private List<String> allowedSubcommands(CommandSender sender) {
+        return ADMIN_ORDER.stream().filter(sub -> sender.hasPermission(ADMIN_SUBCOMMANDS.get(sub))).toList();
+    }
+
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
-        if (args.length != 1 || !sender.hasPermission(ADMIN_PERMISSION)) return List.of();
-        String start = args[0].toLowerCase(Locale.ROOT);
+        String start = args.length == 0 ? "" : args[args.length - 1].toLowerCase(Locale.ROOT);
+        if (command.getName().equalsIgnoreCase("shvoiditems")) {
+            List<String> allowed = allowedSubcommands(sender);
+            if (args.length == 1) return allowed.stream().filter(sub -> sub.startsWith(start)).toList();
+            if (args.length != 2 || !allowed.contains("view") || !args[0].equalsIgnoreCase("view")) return List.of();
+            return visiblePlayers(sender, start);
+        }
+        if (args.length != 1 || !sender.hasPermission(ADMIN_SUBCOMMANDS.get("view"))) return List.of();
+        return visiblePlayers(sender, start);
+    }
+
+    /** Noms des joueurs en ligne que l'expéditeur peut voir, commençant par {@code start}. */
+    private List<String> visiblePlayers(CommandSender sender, String start) {
         return getServer().getOnlinePlayers().stream()
             .filter(target -> !(sender instanceof Player viewer) || viewer.canSee(target))
             .map(Player::getName)
             .filter(name -> name.toLowerCase(Locale.ROOT).startsWith(start))
             .sorted(String.CASE_INSENSITIVE_ORDER)
             .toList();
+    }
+
+    /**
+     * /shvoiditems reload : relit config.yml et messages.yml. Les deux fichiers sont lus avant que quoi que ce soit change :
+     * une erreur YAML garde la configuration en place. data.yml n'est jamais relu.
+     */
+    private void reload(CommandSender sender) {
+        File configFile = new File(getDataFolder(), "config.yml");
+        File messagesFile = new File(getDataFolder(), "messages.yml");
+        YamlConfiguration config;
+        YamlConfiguration messageFile;
+        try {
+            config = parseConfig(configFile);
+        } catch (IOException | InvalidConfigurationException e) {
+            send(sender, "reload-error", "{file}", configFile.getName(), "{error}", shortError(e));
+            return;
+        }
+        try {
+            messageFile = parse(messagesFile);
+        } catch (IOException | InvalidConfigurationException e) {
+            send(sender, "reload-error", "{file}", messagesFile.getName(), "{error}", shortError(e));
+            return;
+        }
+        reloadConfig();
+        applySettings(config, readMessages(messageFile));
+        scheduleTasks(config);
+        // Le titre et les boutons d'un menu ouvert viennent de la configuration : on le rouvre avec la nouvelle
+        for (Player viewer : getServer().getOnlinePlayers()) {
+            VoidMenu menu = menuOf(viewer);
+            if (menu != null) openMenu(viewer, menu.island(), menu.page());
+        }
+        send(sender, "reload-done");
+        if (config.getBoolean("reseau.actif", true) != networkConfigured) send(sender, "reload-restart");
+        getLogger().info("Configuration rechargée par " + sender.getName());
+    }
+
+    /** Lit un fichier YAML sans rien avaler : une erreur de syntaxe est relancée. */
+    private static YamlConfiguration parse(File file) throws IOException, InvalidConfigurationException {
+        YamlConfiguration yaml = new YamlConfiguration();
+        yaml.load(file);
+        return yaml;
+    }
+
+    /** config.yml lu strictement, avec les valeurs du jar pour toute clé absente (comme getConfig()). */
+    private YamlConfiguration parseConfig(File file) throws IOException, InvalidConfigurationException {
+        YamlConfiguration yaml = parse(file);
+        try (Reader defaults = new InputStreamReader(Objects.requireNonNull(getResource("config.yml")), StandardCharsets.UTF_8)) {
+            yaml.setDefaults(YamlConfiguration.loadConfiguration(defaults));
+        }
+        return yaml;
+    }
+
+    /** Message d'erreur YAML sur une ligne, sans les '&' qui seraient lus comme des codes couleur. */
+    private static String shortError(Exception e) {
+        String text = String.valueOf(e.getMessage()).replace("&", "").replaceAll("\\s+", " ").trim();
+        return text.length() > 220 ? text.substring(0, 220) + "..." : text;
     }
 
     private boolean setupEconomy() {
@@ -260,30 +392,41 @@ public class SHVoidItems extends JavaPlugin implements Listener, TabExecutor {
         return true;
     }
 
-    private void loadConfigValues() {
-        FileConfiguration cfg = getConfig();
-        menuTitle = cfg.getString("menu.title", "");
-        itemsPerPage = Math.min(VoidMenu.SIZE, Math.max(1, cfg.getInt("menu.items-per-page")));
-        menuItems = loadMenuItems(cfg.getConfigurationSection("menu.items"));
-        currencyType = cfg.getString("currency.type");
-        currencyItem = Material.matchMaterial(cfg.getString("currency.item", ""));
-        if ("item".equals(currencyType) && currencyItem == null) getLogger().warning("currency.item invalide : aucun achat ne sera possible.");
-        defaultExpireSeconds = cfg.getLong("defaults.expire-seconds");
-        defaultPrice = cfg.getDouble("defaults.price");
-        customPrices = new HashMap<>();
+    /**
+     * Lit les réglages de config.yml et les textes, puis les publie d'un bloc : les threads des mondes et la sauvegarde
+     * asynchrone lisent ces champs pendant un rechargement.
+     */
+    private void applySettings(FileConfiguration cfg, Map<String, String> loadedMessages) {
+        String title = cfg.getString("menu.title", "");
+        int perPage = Math.min(VoidMenu.SIZE, Math.max(1, cfg.getInt("menu.items-per-page", 45)));
+        Map<String, MenuItemDef> items = loadMenuItems(cfg.getConfigurationSection("menu.items"));
+        String currency = cfg.getString("currency.type");
+        Material currencyMaterial = Material.matchMaterial(cfg.getString("currency.item", ""));
+        if ("item".equals(currency) && currencyMaterial == null) getLogger().warning("currency.item invalide : aucun achat ne sera possible.");
+        Map<String, Double> prices = new HashMap<>();
         ConfigurationSection custom = cfg.getConfigurationSection("custom");
         if (custom != null) {
             for (String k : custom.getKeys(false)) {
-                if (custom.contains(k + ".price")) customPrices.put(k, custom.getDouble(k + ".price"));
+                if (custom.contains(k + ".price")) prices.put(k, custom.getDouble(k + ".price"));
             }
         }
-        buySound = sound(cfg.getString("options.buy-sound"));
-        if (buySound == null) getLogger().warning("options.buy-sound invalide : aucun son ne sera joué à l'achat.");
-        blacklist = cfg.getStringList("blacklist").stream().map(Material::matchMaterial).filter(Objects::nonNull).collect(Collectors.toSet());
-        messages = loadMessages();
+        Sound sound = sound(cfg.getString("options.buy-sound"));
+        if (sound == null) getLogger().warning("options.buy-sound invalide : aucun son ne sera joué à l'achat.");
+
+        menuTitle = title;
+        itemsPerPage = perPage;
+        menuItems = items;
+        currencyType = currency;
+        currencyItem = currencyMaterial;
+        defaultExpireSeconds = cfg.getLong("defaults.expire-seconds", 86400L);
+        defaultPrice = cfg.getDouble("defaults.price", 1D);
+        customPrices = prices;
+        buySound = sound;
+        blacklist = cfg.getStringList("blacklist").stream().map(Material::matchMaterial).filter(Objects::nonNull).collect(Collectors.toUnmodifiableSet());
+        messages = loadedMessages;
         countdownFormat = cfg.getString("countdown-format", "");
-        loreTemplate = cfg.getStringList("lore");
-        margin = cfg.getDouble("void-margin");
+        loreTemplate = List.copyOf(cfg.getStringList("lore"));
+        margin = cfg.getDouble("void-margin", 3D);
         purchaseLogFile = cfg.getString("logs.purchase.file", "rachats");
         purchaseLogFormat = cfg.getString("logs.purchase.format", "%player% -> rachète %amount% %item% (%price% éclats d'écho)");
     }
@@ -310,7 +453,11 @@ public class SHVoidItems extends JavaPlugin implements Listener, TabExecutor {
     }
 
     private Map<String, String> loadMessages() {
-        YamlConfiguration file = YamlConfiguration.loadConfiguration(new File(getDataFolder(), "messages.yml"));
+        return readMessages(YamlConfiguration.loadConfiguration(new File(getDataFolder(), "messages.yml")));
+    }
+
+    /** Textes de messages.yml, avec la valeur du jar pour ceux qu'il n'a pas. */
+    private Map<String, String> readMessages(YamlConfiguration file) {
         Map<String, String> loaded = new HashMap<>();
         for (String key : file.getKeys(false)) {
             String text = file.getString(key);
@@ -452,9 +599,9 @@ public class SHVoidItems extends JavaPlugin implements Listener, TabExecutor {
         openMenu(player, island.getUniqueId(), 1);
     }
 
-    /** /shvoid &lt;joueur&gt; : le menu de l'île d'un autre joueur, réservé aux admins. */
+    /** /void &lt;joueur&gt; (et /shvoiditems view) : le menu de l'île d'un autre joueur, réservé aux admins. */
     private void openMenuOf(Player viewer, String targetName) {
-        if (!viewer.hasPermission(ADMIN_PERMISSION)) {
+        if (!viewer.hasPermission(ADMIN_SUBCOMMANDS.get("view"))) {
             send(viewer, "no-permission");
             return;
         }

@@ -18,7 +18,7 @@ Garde les items tombés dans le vide d'une île, rachetables auprès du Marchand
 
 Un item qui sort du monde par le bas, à moins de `void-margin` blocs d'une île, est retenu pour cette île : les items identiques se
 cumulent et l'ensemble disparaît `defaults.expire-seconds` après le premier. Les membres de l'île les rachètent dans un menu de 54
-emplacements (`/shvoid`) contre des éclats d'écho, ou de l'argent Vault selon `currency.type`. Le prix se règle par matériau
+emplacements (`/void`) contre des éclats d'écho, ou de l'argent Vault selon `currency.type`. Le prix se règle par matériau
 (`custom.<MATÉRIAU>.price`) et `blacklist` écarte des matériaux.
 
 Chaque rachat est écrit dans le fichier `rachats` de SHLogs (`plugins/SHLogs/SHVoidItems/`).
@@ -41,8 +41,8 @@ Avec **SHSkyBridge** et **SHNetwork** installés (plusieurs serveurs se partagen
 
 - chaque serveur ne garde dans son `data.yml` que les items tombés dans le vide des îles qu'il héberge ; les entrées des autres îles ne sont ni modifiées ni expirées ici ;
 - les entrées d'une île suivent l'île quand SHSkyBridge la déplace (`/skybridge deplacer`) ;
-- `/shvoid` envoie le joueur sur le serveur de son île quand elle est ailleurs : le menu s'ouvre à son arrivée (durée de validité `reseau.arrivee-secondes`) ;
-- `/shvoid <joueur>` indique le serveur de l'île quand elle n'est pas hébergée ici.
+- `/void` envoie le joueur sur le serveur de son île quand elle est ailleurs : le menu s'ouvre à son arrivée (durée de validité `reseau.arrivee-secondes`) ;
+- `/void <joueur>` indique le serveur de l'île quand elle n'est pas hébergée ici.
 
 Sans eux, ou sans la clé `reseau`, le plugin se comporte comme avant.
 
@@ -50,15 +50,18 @@ Sans eux, ou sans la clé `reseau`, le plugin se comporte comme avant.
 
 | Commande | Alias | Description | Permission |
 |---|---|---|---|
-| `/shvoid` | `/void` | Ouvre le menu des Void Items de votre île | `shvoiditems.use` |
-| `/shvoid <joueur>` | `/void <joueur>` | Ouvre le menu des Void Items de l'île d'un joueur en ligne (complétion des noms) | `shvoiditems.admin` |
+| `/void` | `/shvoid` | Ouvre le menu des Void Items de votre île | `shvoiditems.use` |
+| `/shvoiditems view <joueur>` | `/void <joueur>` | Ouvre le menu des Void Items de l'île d'un joueur en ligne (complétion des noms) | `shvoiditems.admin.view` |
+| `/shvoiditems reload` | — | Relit `config.yml` et `messages.yml` (un fichier illisible ne change rien, `data.yml` n'est jamais relu) | `shvoiditems.admin.reload` |
 
 ## Permissions
 
 | Permission | Description | Par défaut |
 |---|---|---|
 | `shvoiditems.use` | Permet d’ouvrir son propre menu void. | `true` |
-| `shvoiditems.admin` | Permet d’ouvrir le menu void d’un autre joueur. | `op` |
+| `shvoiditems.admin` | Toutes les sous-commandes de `/shvoiditems`. | `op` |
+| `shvoiditems.admin.view` | Permet d’ouvrir le menu void d’un autre joueur. | `op` |
+| `shvoiditems.admin.reload` | Recharger la configuration. | `op` |
 
 ## Configuration
 
