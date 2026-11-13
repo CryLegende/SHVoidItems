@@ -41,7 +41,7 @@ menu:
       material: "PAPER"
       display-name: "&c⤾ Retour &7(Clic)"
       slot: 49
-      command: "dm open island_more"
+      command: "spawn"
 
 # Monnaie des rachats. type : "item" (autant d'exemplaires de currency.item que le prix) ou "money" (argent Vault)
 currency:
@@ -56,55 +56,11 @@ defaults:
 # Prix par matériau (nom du matériau), à la place de defaults.price
 custom:
   SPAWNER:
-    price: 5
-  RESPAWN_ANCHOR:
     price: 10
-  DRAGON_EGG:
-    price: 10
-  REINFORCED_DEEPSLATE:
-    price: 5
-  BARREL:
-    price: 5
-  CHEST:
-    price: 4
-
   DIAMOND_SWORD:
     price: 4
-  DIAMOND_HELMET:
-    price: 4
-  DIAMOND_CHESTPLATE:
-    price: 4
-  DIAMOND_LEGGINGS:
-    price: 4
-  DIAMOND_BOOTS:
-    price: 4
-  DIAMOND_PICKAXE:
-    price: 4
-  DIAMOND_SHOVEL:
-    price: 4
-  DIAMOND_AXE:
-    price: 4
-  DIAMOND_HOE:
-    price: 4
-
-  NETHERITE_SWORD:
-    price: 10
-  NETHERITE_HELMET:
-    price: 10
-  NETHERITE_CHESTPLATE:
-    price: 10
-  NETHERITE_LEGGINGS:
-    price: 10
-  NETHERITE_BOOTS:
-    price: 10
-  NETHERITE_PICKAXE:
-    price: 10
-  NETHERITE_SHOVEL:
-    price: 10
-  NETHERITE_AXE:
-    price: 10
-  NETHERITE_HOE:
-    price: 10
+  CHEST:
+    price: 2
 
 # Matériaux jamais retenus
 blacklist:
