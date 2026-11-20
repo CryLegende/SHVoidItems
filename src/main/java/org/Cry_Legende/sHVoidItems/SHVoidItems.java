@@ -143,7 +143,6 @@ public class SHVoidItems extends JavaPlugin implements Listener, TabExecutor {
         enableGiver();
         enableNetwork();
         scheduleTasks(cfg);
-        getLogger().info("SHVoidItems activé.");
     }
 
     /** (Re)programme la sauvegarde, la purge et le rafraîchissement des menus avec les périodes de config.yml. */
